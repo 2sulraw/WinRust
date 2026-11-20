@@ -12,6 +12,7 @@ pub mod desktop;
 pub mod journal;
 pub mod mem;
 pub mod mft;
+pub mod proc;
 pub mod reg;
 pub mod settings;
 pub mod style;

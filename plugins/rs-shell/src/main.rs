@@ -100,18 +100,37 @@ unsafe extern "system" fn park(h: HWND, _: LPARAM) -> BOOL {
     }
 }
 
+/// GDI+ decodes any format it knows and saves a BMP (what the desktop paints without explorer's transcoder).
+fn to_bmp(src: &str, dst: &std::path::Path) {
+    use windows_sys::{core::GUID, Win32::Graphics::GdiPlus::*};
+    let wide = |s: &str| s.encode_utf16().chain([0]).collect::<Vec<u16>>();
+    const BMP: GUID = GUID { data1: 0x557C_F400, data2: 0x1A04, data3: 0x11D3, data4: [0x9A, 0x73, 0x00, 0x00, 0xF8, 0x1E, 0xF3, 0x2E] }; // image/bmp encoder
+    unsafe {
+        let (mut token, mut input): (usize, GdiplusStartupInput) = (0, std::mem::zeroed());
+        input.GdiplusVersion = 1;
+        if GdiplusStartup(&mut token, &input, ptr::null_mut()) != 0 {
+            return;
+        }
+        let mut img = ptr::null_mut();
+        if GdipLoadImageFromFile(wide(src).as_ptr(), &mut img) == 0 {
+            GdipSaveImageToFile(img, wide(&dst.to_string_lossy()).as_ptr(), &BMP, ptr::null());
+            GdipDisposeImage(img);
+        }
+        GdiplusShutdown(token);
+    }
+}
+
 fn set_wallpaper() {
     let Some(src) = reg(&["query", r"HKCU\Control Panel\Desktop", "/v", "WallPaper"]).map(|o| parse_run(&o)).and_then(|v| v.into_iter().next()) else { return };
     let mut path = PathBuf::from(&src);
-    // without explorer's image transcoder the desktop paints only BMP: convert once (System.Drawing) and keep the copy
+    // without explorer's image transcoder the desktop paints only BMP: convert once and keep the copy
     if !src.to_lowercase().ends_with(".bmp") {
         let Ok(base) = std::env::var("LOCALAPPDATA") else { return };
         let bmp = PathBuf::from(base).join("rs-shell").join("wallpaper.bmp");
         let modified = |p: &std::path::Path| std::fs::metadata(p).and_then(|m| m.modified()).ok();
         if modified(&bmp) < modified(&PathBuf::from(&src)) {
             let _ = std::fs::create_dir_all(bmp.parent().unwrap_or(&bmp));
-            let script = format!("Add-Type -AssemblyName System.Drawing; $i=[Drawing.Image]::FromFile('{}'); $i.Save('{}',[Drawing.Imaging.ImageFormat]::Bmp)", src.replace('\'', "''"), bmp.display().to_string().replace('\'', "''"));
-            let _ = quiet("powershell").args(["-NoProfile", "-NonInteractive", "-Command", &script]).creation_flags(NO_WINDOW).status();
+            to_bmp(&src, &bmp);
         }
         path = bmp;
     }
@@ -207,9 +226,8 @@ fn replace_on() -> bool {
 /// Ends the Explorer that runs as the shell (started without arguments). Folder windows (started with a path) and the COM
 /// host (`/factory ... -Embedding`) are other explorer.exe processes and keep running.
 fn kill_shell_explorer() {
-    let script = r#"Get-CimInstance Win32_Process -Filter "Name='explorer.exe'" | Where-Object { $_.CommandLine -match '(?i)explorer\.exe"?(\s+/NoUACCheck)?\s*$' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force }"#;
-    let r = quiet("powershell").args(["-NoProfile", "-NonInteractive", "-Command", script]).creation_flags(NO_WINDOW).status();
-    log(&format!("explorer shell stopped -> {:?}", r.map(|s| s.success())));
+    winrust_common::proc::kill_shell_explorers();
+    log("explorer shell stopped");
 }
 
 /// How long after the overlay starts Explorer may be ended even without the markers below: newer Windows builds (26300)
@@ -351,8 +369,20 @@ fn main() {
 
 #[cfg(test)]
 mod tests {
-    use super::{exe_path, may_end_explorer, parse_run};
+    use super::{exe_path, may_end_explorer, parse_run, to_bmp};
     use std::time::Duration;
+    #[test]
+    fn converts_a_jpeg_to_bmp() {
+        let src = r"C:\Windows\Web\Wallpaper\Windows\img0.jpg";
+        if !std::path::Path::new(src).is_file() {
+            return;
+        }
+        let dst = std::env::temp_dir().join("rs-shell-test.bmp");
+        let _ = std::fs::remove_file(&dst);
+        to_bmp(src, &dst);
+        assert_eq!(&std::fs::read(&dst).unwrap()[..2], b"BM");
+        let _ = std::fs::remove_file(dst);
+    }
     #[test]
     fn ends_explorer_on_markers_or_after_grace() {
         assert!(may_end_explorer(true, Duration::ZERO));
