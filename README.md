@@ -62,6 +62,8 @@ The gear at the left end of the bar opens **Style**. The choice applies at once 
 | **White road** | Light ivory with gold: faint low-poly triangles, some traced in gold, behind the bar, its panels and rust-settings |
 | **Ruby** | Deep garnet with a bright ruby accent: a smooth top-to-bottom gradient with a soft gloss, behind the bar and its panels |
 
+The gear menu also sets the bar position (bottom, left or right: a side bar shows icons only and the panels open next to it) and auto-hide.
+
 The choice is stored in `%ProgramData%\WinRust\style.txt`.
 
 ## Benchmark

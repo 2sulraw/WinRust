@@ -113,6 +113,69 @@ pub fn set_autohide(on: bool) {
     }
 }
 
+/// Which screen edge the topbar sits on.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Side {
+    Bottom,
+    Left,
+    Right,
+}
+
+impl Side {
+    pub fn parse(s: &str) -> Side {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "left" => Side::Left,
+            "right" => Side::Right,
+            _ => Side::Bottom,
+        }
+    }
+    pub fn name(self) -> &'static str {
+        match self {
+            Side::Bottom => "bottom",
+            Side::Left => "left",
+            Side::Right => "right",
+        }
+    }
+}
+
+fn side_file() -> Option<PathBuf> {
+    std::env::var_os("ProgramData").map(|p| PathBuf::from(p).join("WinRust").join("side.txt"))
+}
+
+static SIDE: AtomicU8 = AtomicU8::new(0);
+static SIDE_AT: AtomicU64 = AtomicU64::new(0);
+
+fn side_code(s: Side) -> u8 {
+    match s {
+        Side::Bottom => 0,
+        Side::Left => 1,
+        Side::Right => 2,
+    }
+}
+
+/// The bar's edge (bottom unless %ProgramData%\WinRust\side.txt says left or right). Re-read once a second.
+pub fn side() -> Side {
+    if now_ms().saturating_sub(SIDE_AT.load(Relaxed)) > 1000 {
+        let s = side_file().and_then(|f| std::fs::read_to_string(f).ok()).map_or(Side::Bottom, |s| Side::parse(&s));
+        SIDE.store(side_code(s), Relaxed);
+        SIDE_AT.store(now_ms(), Relaxed);
+    }
+    match SIDE.load(Relaxed) {
+        1 => Side::Left,
+        2 => Side::Right,
+        _ => Side::Bottom,
+    }
+}
+
+pub fn set_side(s: Side) {
+    SIDE.store(side_code(s), Relaxed);
+    SIDE_AT.store(now_ms(), Relaxed);
+    if let Some(f) = side_file() {
+        let _ = std::fs::create_dir_all(f.parent().unwrap());
+        let _ = std::fs::write(f, s.name());
+    }
+}
+
 /// The broadcast message a window gets when the style changed: call `reload()` and repaint.
 pub fn msg() -> u32 {
     static M: AtomicU32 = AtomicU32::new(0);
@@ -305,5 +368,14 @@ mod tests {
         assert_eq!(hash(3, 4, 1), hash(3, 4, 1));
         assert!((0..50).all(|i| (0.0..=1.0).contains(&hash(i, -i, 2))));
         assert_eq!(mix(rgb(0, 0, 0), rgb(200, 100, 50), 0.5), rgb(100, 50, 25));
+    }
+
+    #[test]
+    fn side_parses_and_defaults_to_bottom() {
+        assert_eq!(Side::parse(" Left
+"), Side::Left);
+        assert_eq!(Side::parse("right"), Side::Right);
+        assert_eq!(Side::parse(""), Side::Bottom);
+        assert_eq!(Side::parse("top"), Side::Bottom);
     }
 }
