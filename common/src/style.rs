@@ -13,9 +13,10 @@ pub enum Style {
     Dock,     // the bar is a floating pill in the middle
     Tiling,   // a thin status strip at the top, windows side by side
     Road,     // "White road": light ivory, faint triangles in the background
+    Ruby,     // deep ruby, a smooth glossy gradient
 }
 
-pub const ALL: [Style; 5] = [Style::Normal, Style::Terminal, Style::Dock, Style::Tiling, Style::Road];
+pub const ALL: [Style; 6] = [Style::Normal, Style::Terminal, Style::Dock, Style::Tiling, Style::Road, Style::Ruby];
 
 impl Style {
     pub fn name(self) -> &'static str {
@@ -25,6 +26,7 @@ impl Style {
             Style::Dock => "dock",
             Style::Tiling => "tiling",
             Style::Road => "road",
+            Style::Ruby => "ruby",
         }
     }
     /// Unknown or empty text (no file yet, a hand edit) is the normal style.
@@ -141,7 +143,7 @@ pub const fn rgb(r: u8, g: u8, b: u8) -> u32 {
 }
 
 /// In the order of `ALL`. Neutral, low-contrast surfaces and one restrained accent (the look of macOS / modern fintech apps).
-pub const PALS: [Pal; 5] = [
+pub const PALS: [Pal; 6] = [
     // normal: graphite with the Apple system blue
     Pal { bg: rgb(22, 22, 24), line: rgb(46, 46, 50), hover: rgb(36, 36, 40), active: rgb(44, 44, 49), accent: rgb(10, 132, 255), text: rgb(245, 245, 247), dim: rgb(142, 142, 147) },
     // terminal: green on black
@@ -152,6 +154,8 @@ pub const PALS: [Pal; 5] = [
     Pal { bg: rgb(16, 17, 20), line: rgb(38, 40, 46), hover: rgb(27, 29, 34), active: rgb(35, 37, 43), accent: rgb(245, 182, 82), text: rgb(224, 226, 231), dim: rgb(120, 125, 138) },
     // white road: warm ivory with gold
     Pal { bg: rgb(247, 245, 240), line: rgb(226, 220, 207), hover: rgb(238, 233, 222), active: rgb(232, 225, 210), accent: rgb(176, 134, 52), text: rgb(28, 26, 22), dim: rgb(124, 117, 104) },
+    // ruby: deep garnet surfaces, a bright ruby accent, warm rose-white text
+    Pal { bg: rgb(26, 7, 13), line: rgb(72, 22, 36), hover: rgb(46, 13, 24), active: rgb(60, 17, 31), accent: rgb(232, 52, 84), text: rgb(252, 238, 241), dim: rgb(178, 126, 139) },
 ];
 
 /// Status colours shared by every style (Apple's dark-mode system green, yellow, red).
@@ -170,7 +174,7 @@ pub fn card() -> u32 {
 
 /// Text and glyphs drawn on an accent fill.
 pub fn on_accent() -> u32 {
-    if style().light() { rgb(255, 255, 255) } else { pal().bg }
+    if style().light() || style() == Style::Ruby { rgb(255, 255, 255) } else { pal().bg }
 }
 
 /// `a` moved toward `b` by `t` (0..1), per channel.
@@ -186,7 +190,8 @@ pub fn mix(a: u32, b: u32, t: f32) -> u32 {
 /// Does nothing in the other styles. Needs GDI+ started (GdiplusStartup) by the program.
 pub unsafe fn backdrop(dc: windows_sys::Win32::Graphics::Gdi::HDC, r: windows_sys::Win32::Foundation::RECT, scale: f32) {
     use windows_sys::Win32::Graphics::GdiPlus::*;
-    if !style().light() {
+    let ruby = style() == Style::Ruby;
+    if !style().light() && !ruby {
         return;
     }
     let mut g: *mut GpGraphics = std::ptr::null_mut();
@@ -194,6 +199,23 @@ pub unsafe fn backdrop(dc: windows_sys::Win32::Graphics::Gdi::HDC, r: windows_sy
         return;
     }
     let argb = |c: u32, a: f32| ((a.clamp(0.0, 1.0) * 255.0) as u32) << 24 | (c & 255) << 16 | (c & 0xFF00) | (c >> 16 & 255);
+    if ruby {
+        // smooth: a vertical ruby gradient (lighter on top, near-black garnet below) and a soft gloss over the upper third
+        let (x, y, w, h) = (r.left, r.top, (r.right - r.left).max(1), (r.bottom - r.top).max(1));
+        unsafe {
+            GdipSetSmoothingMode(g, SmoothingModeAntiAlias);
+            let mut br: *mut GpLineGradient = std::ptr::null_mut();
+            GdipCreateLineBrushI(&Point { X: x, Y: y }, &Point { X: x, Y: y + h }, argb(mix(pal().bg, rgb(150, 18, 42), 0.62), 1.0), argb(mix(pal().bg, rgb(0, 0, 0), 0.25), 1.0), WrapModeTileFlipXY, &mut br);
+            GdipFillRectangleI(g, br as *mut GpBrush, x, y, w, h);
+            GdipDeleteBrush(br as *mut GpBrush);
+            let gh = (h / 3).max(1);
+            GdipCreateLineBrushI(&Point { X: x, Y: y }, &Point { X: x, Y: y + gh }, argb(rgb(255, 255, 255), 0.09), argb(rgb(255, 255, 255), 0.0), WrapModeTileFlipXY, &mut br);
+            GdipFillRectangleI(g, br as *mut GpBrush, x, y, w, gh);
+            GdipDeleteBrush(br as *mut GpBrush);
+            GdipDeleteGraphics(g);
+        }
+        return;
+    }
     let (x0, y0, w, h) = (r.left as f32, r.top as f32, (r.right - r.left) as f32, (r.bottom - r.top) as f32);
     let s = 58.0 * scale.max(0.5);
     let (cols, rows) = ((w / s) as i32 + 2, (h / (s * 0.866)) as i32 + 2);

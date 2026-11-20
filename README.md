@@ -60,6 +60,7 @@ The gear at the left end of the bar opens **Style**. The choice applies at once 
 | **Floating dock** | A pill-shaped bar in the middle; maximized windows get the whole screen, the dock slides away over them and comes back at the bottom edge |
 | **Tiling** | A thin bar at the top, amber accent, rounded like Normal; "Tile the windows" puts the open windows side by side |
 | **White road** | Light ivory with gold: faint low-poly triangles, some traced in gold, behind the bar, its panels and rust-settings |
+| **Ruby** | Deep garnet with a bright ruby accent: a smooth top-to-bottom gradient with a soft gloss, behind the bar and its panels |
 
 The choice is stored in `%ProgramData%\WinRust\style.txt`.
 

@@ -698,6 +698,18 @@ pub unsafe extern "system" fn proc(h: HWND, m: u32, wp: WPARAM, lp: LPARAM) -> L
             if BRUSH.get() == 0 { BRUSH.set(CreateSolidBrush(pill()) as isize); }
             return BRUSH.get();
         }
+        WM_RBUTTONUP => {
+            // right click on a pinned folder: unpin it
+            if let Some(p) = nav_hit(y).and_then(nav_path).filter(|p| pins().contains(p)) {
+                let menu = CreatePopupMenu();
+                AppendMenuW(menu, MF_STRING, 1, w("Unpin from Quick access").as_ptr());
+                let mut pt: POINT = std::mem::zeroed();
+                GetCursorPos(&mut pt);
+                let id = TrackPopupMenu(menu, TPM_RETURNCMD | TPM_RIGHTBUTTON, pt.x, pt.y, 0, h, ptr::null());
+                DestroyMenu(menu);
+                if id == 1 { toggle_pin(&p); }
+            }
+        }
         _ => return DefWindowProcW(h, m, wp, lp),
     }
     0
@@ -724,6 +736,25 @@ thread_local! {
     static NAVHOT: Cell<i32> = const { Cell::new(-1) };
 }
 
+/// Folders the user pinned to Quick access: %APPDATA%\WinRust\rust-explorer-pins.txt, one path per line.
+fn pins_file() -> Option<PathBuf> { env::var_os("APPDATA").map(|a| PathBuf::from(a).join("WinRust").join("rust-explorer-pins.txt")) }
+
+pub fn pins() -> Vec<PathBuf> {
+    pins_file().and_then(|f| fs::read_to_string(f).ok()).map(|s| s.lines().map(str::trim).filter(|l| !l.is_empty()).map(PathBuf::from).collect()).unwrap_or_default()
+}
+
+/// Pins `p` (or unpins it when already pinned) and rebuilds the left pane.
+pub fn toggle_pin(p: &Path) {
+    let mut v = pins();
+    if let Some(i) = v.iter().position(|x| x == p) { v.remove(i); } else { v.push(p.to_path_buf()); }
+    if let Some(f) = pins_file() {
+        if let Some(d) = f.parent() { let _ = fs::create_dir_all(d); }
+        let _ = fs::write(f, v.iter().map(|x| x.to_string_lossy().into_owned()).collect::<Vec<_>>().join("\n"));
+    }
+    let h = NAVWND.get() as HWND;
+    if !h.is_null() { nav_init(h); nav_dirty(); }
+}
+
 pub fn nav_init(h: HWND) {
     NAVWND.set(h as isize);
     let home = PathBuf::from(env::var_os("USERPROFILE").unwrap_or_default());
@@ -733,6 +764,9 @@ pub fn nav_init(h: HWND) {
     for (t, id, g) in [("Desktop", &FOLDERID_Desktop, "\u{E7F4}"), ("Downloads", &FOLDERID_Downloads, "\u{E896}"), ("Documents", &FOLDERID_Documents, "\u{E8A5}"), ("Pictures", &FOLDERID_Pictures, "\u{E91B}"), ("Music", &FOLDERID_Music, "\u{E8D6}"), ("Videos", &FOLDERID_Videos, "\u{E714}")] {
         let Some(p) = crate::sh::known_dir(id).filter(|p| p.is_dir()) else { continue };
         v.push(NavItem { title: t.into(), path: p, glyph: g, cap: None });
+    }
+    for p in pins() {
+        if p.is_dir() { v.push(NavItem { title: p.file_name().map_or_else(|| p.to_string_lossy().into_owned(), |n| n.to_string_lossy().into_owned()), path: p, glyph: "\u{E718}", cap: None }); }
     }
     v.push(head("This PC"));
     unsafe {

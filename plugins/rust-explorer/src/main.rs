@@ -156,6 +156,7 @@ fn paste(h: HWND, dir: &PathBuf) {
 
 const MENU_ZIP: u32 = 0x9001;
 const MENU_EXTRACT: u32 = 0x9002;
+const MENU_PIN: u32 = 0x9003;
 
 /// The shell menu for the selection, with our "Compress to ZIP" / "Extract here" on top.
 fn item_menu(h: HWND, dir: &Path, paths: &[PathBuf]) {
@@ -163,8 +164,10 @@ fn item_menu(h: HWND, dir: &Path, paths: &[PathBuf]) {
     if paths.iter().all(|p| p.is_file() && jobs::is_archive(p)) {
         extra.insert(0, (MENU_EXTRACT, "Extract here"));
     }
+    if let [p] = paths { if p.is_dir() { extra.push((MENU_PIN, if ui::pins().contains(p) { "Unpin from Quick access" } else { "Pin to Quick access" })); } }
     let picked = sh::show(h, paths, if jobs::busy() { &[] } else { &extra }).ok().flatten();
     match picked {
+        Some(MENU_PIN) => ui::toggle_pin(&paths[0]),
         Some(MENU_ZIP) => {
             let base = if paths.len() == 1 { paths[0].file_stem().unwrap_or_default().to_string_lossy().into_owned() } else { dir.file_name().map_or("Archive".into(), |n| n.to_string_lossy().into_owned()) };
             let dest = jobs::free_name(dir, &format!("{base}.zip"), false);
