@@ -105,6 +105,7 @@ thread_local! {
     static CTX: RefCell<Option<(String, i32, i32, u64)>> = const { RefCell::new(None) }; // Wi-Fi right-click menu: network (by name: the list reorders), x, y (px), opened at
     static QUERY: RefCell<String> = const { RefCell::new(String::new()) };
     static SCROLL: Cell<usize> = const { Cell::new(0) };
+    static SELALL: Cell<bool> = const { Cell::new(false) }; // Ctrl+A in the search: the next key replaces the query
     static ICONS: RefCell<HashMap<Vec<u16>, HICON>> = RefCell::new(HashMap::new()); // by path: the app list is reloaded and reordered
     static SEL: Cell<usize> = const { Cell::new(0) }; // Start: the row Enter opens (arrow keys move it)
     static OVER: Cell<Option<Act>> = const { Cell::new(None) };
@@ -880,6 +881,7 @@ pub fn toggle(k: Kind) {
         HV.with_borrow_mut(|m| m.retain(|k, _| *k < 1_000_000)); // flyout keys are >= 1_000_000: no stale glow from the last panel
         CTX.set(None);
         QUERY.set(String::new());
+        SELALL.set(false);
         SCROLL.set(0);
         SEL.set(0);
         PASS.set(None);
@@ -1573,7 +1575,7 @@ unsafe fn paint(hw: HWND, k: Kind) {
             if q.is_empty() {
                 text(dc, "Type to search apps", r(64, 20, w - 64, 56), pal().dim, DT_LEFT);
             } else {
-                text(dc, &q, r(64, 20, w - 64, 56), pal().text, DT_LEFT);
+                text(dc, &q, r(64, 20, w - 64, 56), if SELALL.get() { pal().accent } else { pal().text }, DT_LEFT);
             }
             if let Some((kr, ka)) = rects(k).into_iter().find(|(_, a)| *a == Act::Keyboard) {
                 g(ka, kr, card, mix(card, pal().text, 0.1), sc(14));
@@ -1817,9 +1819,16 @@ unsafe extern "system" fn proc(hw: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LR
                     }
                 } else {
                     QUERY.with_borrow_mut(|q| {
-                        if c == 8 {
-                            q.pop();
+                        let all = SELALL.replace(false);
+                        if c == 1 {
+                            SELALL.set(!q.is_empty()); // Ctrl+A
+                        } else if c == 127 {
+                            // Ctrl+Backspace: the last word
+                            if all { q.clear() } else { let t = q.trim_end().len(); q.truncate(q[..t].rfind(' ').map_or(0, |i| i + 1)); }
+                        } else if c == 8 {
+                            if all { q.clear() } else { q.pop(); }
                         } else if let Some(ch) = char::from_u32(c).filter(|_| c >= 32) {
+                            if all { q.clear() }
                             q.push(ch);
                         }
                     });

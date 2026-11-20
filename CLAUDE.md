@@ -57,6 +57,7 @@ powershell -ExecutionPolicy Bypass -File scripts\update-plugin.ps1 <rust-search|
 - Никаких `Co-Authored-By` и упоминаний Claude в коммитах, PR и релизах: Claude не должен появляться контрибьютором. Это важнее общих шаблонов атрибуции.
 - Автор: `Lemxy <183076981+Lemxy@users.noreply.github.com>` (уже в git config). Настоящую почту владельца в репозиторий не писать.
 - `git push --force`, удаление репозитория/тегов/релизов и смена видимости только по прямой просьбе.
+- Чужие PR вливать только через `git merge --squash` и коммит от Lemxy без `Co-Authored-By` (владелец не хочет чужих контрибьюторов в истории). Мерж-коммиты с авторством автора PR не использовать; после пуша PR на GitHub уже будут помечены merged.
 - Не коммитить `payload\*.exe`, `target\`, логи (они в `.gitignore`).
 
 **Документация.**

@@ -729,9 +729,10 @@ pub fn nav_init(h: HWND) {
     let home = PathBuf::from(env::var_os("USERPROFILE").unwrap_or_default());
     let head = |t: &str| NavItem { title: t.into(), path: PathBuf::new(), glyph: "", cap: None };
     let mut v = vec![head("Quick access"), NavItem { title: "Home".into(), path: home.clone(), glyph: "\u{E80F}", cap: None }];
-    for (t, sub, g) in [("Desktop", "Desktop", "\u{E7F4}"), ("Downloads", "Downloads", "\u{E896}"), ("Documents", "Documents", "\u{E8A5}"), ("Pictures", "Pictures", "\u{E91B}"), ("Music", "Music", "\u{E8D6}"), ("Videos", "Videos", "\u{E714}")] {
-        let p = home.join(sub);
-        if p.is_dir() { v.push(NavItem { title: t.into(), path: p, glyph: g, cap: None }); }
+    use windows::Win32::UI::Shell::{FOLDERID_Desktop, FOLDERID_Documents, FOLDERID_Downloads, FOLDERID_Music, FOLDERID_Pictures, FOLDERID_Videos};
+    for (t, id, g) in [("Desktop", &FOLDERID_Desktop, "\u{E7F4}"), ("Downloads", &FOLDERID_Downloads, "\u{E896}"), ("Documents", &FOLDERID_Documents, "\u{E8A5}"), ("Pictures", &FOLDERID_Pictures, "\u{E91B}"), ("Music", &FOLDERID_Music, "\u{E8D6}"), ("Videos", &FOLDERID_Videos, "\u{E714}")] {
+        let Some(p) = crate::sh::known_dir(id).filter(|p| p.is_dir()) else { continue };
+        v.push(NavItem { title: t.into(), path: p, glyph: g, cap: None });
     }
     v.push(head("This PC"));
     unsafe {

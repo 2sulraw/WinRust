@@ -500,6 +500,16 @@ mod sh {
         }).collect()
     }
 
+    /// A known folder where Windows says it is (it may be moved to another drive).
+    pub fn known_dir(id: &GUID) -> Option<PathBuf> {
+        unsafe {
+            let p = SHGetKnownFolderPath(id, KF_FLAG_DEFAULT, None).ok()?;
+            let s = p.to_string().ok();
+            CoTaskMemFree(Some(p.0 as *const c_void));
+            s.map(PathBuf::from)
+        }
+    }
+
     pub fn init() { unsafe { let _ = OleInitialize(None); } }
 
     fn wide(p: &PathBuf) -> Vec<u16> { p.as_os_str().encode_wide().chain([0]).collect() }
@@ -1201,6 +1211,13 @@ unsafe extern "system" fn proc(h: HWND, m: u32, wp: WPARAM, lp: LPARAM) -> LRESU
                             }
                             0x5D if !paths.is_empty() => item_menu(h, &dir, &paths),
                             0x43 | 0x58 if ctrl && !paths.is_empty() => { let _ = sh::clip_set(h, &paths, vk == 0x58); return 0; }
+                            0x41 if ctrl => { // Ctrl+A: select all (state mask LVIS_SELECTED, item -1 = every row)
+                                let mut it: LVITEMW = std::mem::zeroed();
+                                it.stateMask = LVIS_SELECTED;
+                                it.state = LVIS_SELECTED;
+                                put(list, LVM_SETITEMSTATE, usize::MAX, &it as *const _ as isize);
+                                return 0;
+                            }
                             0x56 if ctrl => paste(h, &dir),
                             0x4E if ctrl => new_entry(&dir, "New folder", true),
                             0x48 if ctrl => { SHOW_HIDDEN.fetch_xor(true, Relaxed); } // Ctrl+H: hidden files
