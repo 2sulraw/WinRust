@@ -296,8 +296,13 @@ static COLORS: std::sync::Mutex<[u32; 7]> = std::sync::Mutex::new([u32::MAX; 7])
 static COLORS_AT: AtomicU64 = AtomicU64::new(0);
 
 fn read_colors() -> [u32; 7] {
+    parse_colors(&colors_file().and_then(|f| std::fs::read_to_string(f).ok()).unwrap_or_default())
+}
+
+/// `bg=RRGGBB` pairs, one per line or separated by `;` (colors.txt and the templates); unknown names and junk are skipped.
+fn parse_colors(text: &str) -> [u32; 7] {
     let mut o = [u32::MAX; 7];
-    for l in colors_file().and_then(|f| std::fs::read_to_string(f).ok()).unwrap_or_default().lines() {
+    for l in text.split(['\n', ';']) {
         if let Some((k, v)) = l.split_once('=') {
             if let (Some(i), Ok(v)) = (COLOR_NAMES.iter().position(|n| *n == k.trim()), u32::from_str_radix(v.trim(), 16)) {
                 if v <= 0xFFFFFF { o[i] = rgb((v >> 16) as u8, (v >> 8) as u8, v as u8); }
@@ -305,6 +310,10 @@ fn read_colors() -> [u32; 7] {
         }
     }
     o
+}
+
+fn colors_text(c: &[u32; 7], sep: &str) -> String {
+    c.iter().enumerate().filter(|(_, v)| **v != u32::MAX).map(|(i, v)| format!("{}={:02X}{:02X}{:02X}{sep}", COLOR_NAMES[i], v & 255, (v >> 8) & 255, (v >> 16) & 255)).collect()
 }
 
 /// The user's colours (one per `COLOR_NAMES`, u32::MAX = not set), None when none is set. Re-read once a second.
@@ -331,8 +340,7 @@ pub fn reset_custom() {
 }
 
 fn save_colors(c: [u32; 7]) {
-    let text: String = c.iter().enumerate().filter(|(_, v)| **v != u32::MAX).map(|(i, v)| format!("{}={:02X}{:02X}{:02X}
-", COLOR_NAMES[i], v & 255, (v >> 8) & 255, (v >> 16) & 255)).collect();
+    let text = colors_text(&c, "\n");
     if let Some(f) = colors_file() {
         let _ = std::fs::create_dir_all(f.parent().unwrap());
         let _ = if text.is_empty() { std::fs::remove_file(f) } else { std::fs::write(f, text) };
@@ -367,6 +375,65 @@ pub fn set_bar_opacity(v: u8) {
         let _ = std::fs::create_dir_all(f.parent().unwrap());
         let _ = std::fs::write(f, v.to_string());
     }
+}
+
+/// A saved look (a "template"): the style, the user's colours and the bar's opacity. One per line of
+/// %ProgramData%\WinRust\themes.txt: `name<TAB>style<TAB>opacity<TAB>bg=RRGGBB;text=RRGGBB;`.
+#[derive(Clone, PartialEq, Debug)]
+pub struct Theme {
+    pub name: String,
+    pub style: Style,
+    pub colors: [u32; 7],
+    pub opacity: u8,
+}
+
+impl Theme {
+    fn line(&self) -> String {
+        format!("{}\t{}\t{}\t{}", self.name.replace(['\t', '\r', '\n'], " "), self.style.name(), self.opacity, colors_text(&self.colors, ";"))
+    }
+    fn parse(l: &str) -> Option<Theme> {
+        let mut f = l.trim_end_matches('\r').splitn(4, '\t');
+        let name = f.next().filter(|n| !n.trim().is_empty())?.to_string();
+        let style = Style::parse(f.next()?);
+        let opacity = f.next()?.trim().parse::<u8>().ok()?.clamp(30, 100);
+        Some(Theme { name, style, colors: parse_colors(f.next().unwrap_or("")), opacity })
+    }
+    /// What is on screen now.
+    pub fn current(name: &str) -> Theme {
+        Theme { name: name.into(), style: style(), colors: read_colors(), opacity: bar_opacity() }
+    }
+    /// Switches every WinRust window to this look.
+    pub fn apply(&self) {
+        set_bar_opacity(self.opacity);
+        save_colors(self.colors);
+        set_style(self.style);
+    }
+}
+
+fn themes_file() -> Option<PathBuf> {
+    std::env::var_os("ProgramData").map(|p| PathBuf::from(p).join("WinRust").join("themes.txt"))
+}
+
+/// The saved templates, oldest first.
+pub fn themes() -> Vec<Theme> {
+    themes_file().and_then(|f| std::fs::read_to_string(f).ok()).unwrap_or_default().lines().filter_map(Theme::parse).collect()
+}
+
+pub fn save_themes(t: &[Theme]) {
+    if let Some(f) = themes_file() {
+        let _ = std::fs::create_dir_all(f.parent().unwrap());
+        let _ = std::fs::write(f, t.iter().map(|t| t.line() + "\n").collect::<String>());
+    }
+}
+
+/// Everything the gear menu sets, back to how a fresh install looks (the saved templates stay).
+pub fn reset_all() {
+    set_side(Side::Bottom);
+    set_bar_size(1);
+    set_autohide(false);
+    set_align_left(false);
+    set_alttab_per_monitor(false);
+    Theme { name: String::new(), style: Style::Normal, colors: [u32::MAX; 7], opacity: 100 }.apply();
 }
 
 /// A raised surface (a card, a tile): pure white on the light style, a step up from the background on the dark ones.
@@ -507,6 +574,22 @@ mod tests {
         assert_eq!(hash(3, 4, 1), hash(3, 4, 1));
         assert!((0..50).all(|i| (0.0..=1.0).contains(&hash(i, -i, 2))));
         assert_eq!(mix(rgb(0, 0, 0), rgb(200, 100, 50), 0.5), rgb(100, 50, 25));
+    }
+
+    #[test]
+    fn theme_line_round_trips() {
+        let mut c = [u32::MAX; 7];
+        c[0] = rgb(1, 2, 3);
+        c[4] = rgb(250, 128, 0);
+        let t = Theme { name: "Ночь\tтест".into(), style: Style::Ruby, colors: c, opacity: 70 };
+        let back = Theme::parse(&t.line()).unwrap();
+        assert_eq!(back.name, "Ночь тест");
+        assert_eq!((back.style, back.colors, back.opacity), (Style::Ruby, c, 70));
+        assert_eq!(Theme::parse("a\tnormal\t5\t").unwrap().opacity, 30);
+        assert!(Theme::parse("").is_none() && Theme::parse("x\tnormal").is_none());
+        let mut one = [u32::MAX; 7];
+        one[0] = rgb(1, 2, 3);
+        assert_eq!(parse_colors("bg=010203\nzz=1;text=GG"), one);
     }
 
     #[test]
