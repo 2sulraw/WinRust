@@ -493,6 +493,7 @@ unsafe fn paint_chrome(hwnd: HWND) {
     let bg = CreateSolidBrush(pal().bg);
     FillRect(dc, &cr, bg);
     DeleteObject(bg);
+    winrust_common::style::backdrop(dc, cr, sc(100) as f32 / 100.0);
     SetBkMode(dc, TRANSPARENT as i32);
     let l = layout(cr.right, labels.len());
     let hot = HOT.get();
@@ -594,6 +595,7 @@ pub unsafe fn paint_status(h: HWND) {
     let bg = CreateSolidBrush(pal().bg);
     FillRect(dc, &strip, bg);
     DeleteObject(bg);
+    winrust_common::style::backdrop(dc, strip, sc(100) as f32 / 100.0);
     fill(dc, rc(0, strip.top, cr.right, strip.top + 1), pal().line, 0); // hairline above the status line
     let snap = ST.with(|c| {
         c.try_borrow().ok().map(|s| {
@@ -841,6 +843,7 @@ unsafe fn paint_nav(hwnd: HWND) {
     let bg = CreateSolidBrush(pal().bg);
     FillRect(dc, &cr, bg);
     DeleteObject(bg);
+    winrust_common::style::backdrop(dc, cr, sc(100) as f32 / 100.0);
     SetBkMode(dc, TRANSPARENT as i32);
     let (f_txt, f_head, f_glyph, f_small) = (font(13, 400, ui_face()) as HFONT, font(12, 600, ui_face()) as HFONT, font(16, 400, winrust_common::style::icon_face()) as HFONT, font(11, 400, ui_face()) as HFONT);
     let of = SelectObject(dc, f_txt);

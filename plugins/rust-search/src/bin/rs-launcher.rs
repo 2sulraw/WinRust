@@ -295,7 +295,7 @@ unsafe fn open(h: HWND, reveal: bool) {
     let Some(p) = st(|s| if s.rename.is_some() { None } else { s.results.get(s.sel).cloned() }) else { return };
     hide(h);
     if reveal {
-        ShellExecuteW(null_mut(), wide("open").as_ptr(), wide("explorer.exe").as_ptr(), wide(&format!("/select,\"{p}\"")).as_ptr(), null(), SW_SHOWNORMAL);
+        winrust_common::reveal(&p);
     } else {
         ShellExecuteW(null_mut(), wide("open").as_ptr(), wide(&p).as_ptr(), null(), null(), SW_SHOWNORMAL);
     }
@@ -960,7 +960,7 @@ unsafe fn purge_press(h: HWND, i: usize) {
             });
             if let Some(b) = b {
                 hide(h);
-                ShellExecuteW(null_mut(), wide("open").as_ptr(), wide("explorer.exe").as_ptr(), wide(&format!("/select,\"{b}\"")).as_ptr(), null(), SW_SHOWNORMAL);
+                winrust_common::reveal(&b);
             }
         }
         Some(_) => close_purge(h),

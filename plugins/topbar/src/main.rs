@@ -1351,7 +1351,8 @@ fn layout(w: i32) -> Layout {
     let fixed = (PINS.with_borrow(|p| p.len()) as i32 + 2).min(n);
     // ...but never so far right that the windows' buttons run into the tray: then the whole row shifts left
     let right_limit = w - margin - (n * (bw + gap) - gap);
-    Layout { x0: ((w - (fixed * (bw + gap) - gap)) / 2).min(right_limit).max(sc(GEAR_X.0 + GEAR_X.1 + 6)), bw, gap, apps, sys, clock } // clear of the gear
+    let centered = (w - (fixed * (bw + gap) - gap)) / 2;
+    Layout { x0: if i18n::style::align_left() { 0 } else { centered }.min(right_limit).max(sc(GEAR_X.0 + GEAR_X.1 + 6)), bw, gap, apps, sys, clock } // clear of the gear
 }
 
 unsafe fn hit(hwnd: HWND, x: i32, y: i32) -> i32 {
@@ -1547,14 +1548,15 @@ unsafe fn fs_update(hwnd: HWND) {
     }
 }
 
-/// The dock is in the way of the window in front (a maximized one, or one dragged down under it): it hides like over the
+/// The dock is in the way of the window in front (one dragged down under it): it hides like over the
 /// desktop and comes back when the pointer touches the bottom edge.
 unsafe fn dock_covered() -> bool {
     if !dock() {
         return false;
     }
     let fg = GetForegroundWindow();
-    if fg.is_null() || IsIconic(fg) != 0 || fg == BAR.load(Relaxed) as HWND || fly::any_open() {
+    // a maximized window never hides the dock (it could stay gone until the window was restored)
+    if fg.is_null() || IsIconic(fg) != 0 || IsZoomed(fg) != 0 || fg == BAR.load(Relaxed) as HWND || fly::any_open() {
         return false;
     }
     let mut r: RECT = zeroed();
@@ -2484,6 +2486,7 @@ unsafe fn style_menu() {
         if k == 0 { it = it.sep(); }
         items.push(it);
     }
+    items.push(fly::MItem::new(t!("Кнопки слева (как в Windows 10)", "Buttons on the left (like Windows 10)")).on(i18n::style::align_left()).sep());
     let head = (null_mut(), "\u{E713}", t!("Стиль", "Style").to_string(), t!("Вид панели и программ WinRust", "Look of the bar and the WinRust programs").to_string());
     let tile = i18n::style::ALL.len();
     fly::menu(tip_cx(&bar_layout(bar), GEAR), Some(head), items, move |i| match i18n::style::ALL.get(i) {
@@ -2492,6 +2495,11 @@ unsafe fn style_menu() {
             place(bar);
         }
         None if i == tile => tile_windows(),
+        None if i == tile + 5 => {
+            i18n::style::set_align_left(!i18n::style::align_left());
+            place(bar);
+            bar_anim(bar);
+        }
         None if i > tile + 1 => {
             i18n::style::set_side([i18n::style::Side::Bottom, i18n::style::Side::Left, i18n::style::Side::Right][i - tile - 2]);
             place(bar);

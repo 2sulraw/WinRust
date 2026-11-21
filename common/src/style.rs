@@ -113,6 +113,31 @@ pub fn set_autohide(on: bool) {
     }
 }
 
+fn left_file() -> Option<PathBuf> {
+    std::env::var_os("ProgramData").map(|p| PathBuf::from(p).join("WinRust").join("align-left.txt"))
+}
+
+static LEFT: AtomicU8 = AtomicU8::new(0);
+static LEFT_AT: AtomicU64 = AtomicU64::new(0);
+
+/// Start and the pinned apps sit at the bar's left end, like Windows 10 (off unless the file says 1). Re-read once a second.
+pub fn align_left() -> bool {
+    if now_ms().saturating_sub(LEFT_AT.load(Relaxed)) > 1000 {
+        LEFT.store(left_file().and_then(|f| std::fs::read_to_string(f).ok()).is_some_and(|s| s.trim() == "1") as u8, Relaxed);
+        LEFT_AT.store(now_ms(), Relaxed);
+    }
+    LEFT.load(Relaxed) == 1
+}
+
+pub fn set_align_left(on: bool) {
+    LEFT.store(on as u8, Relaxed);
+    LEFT_AT.store(now_ms(), Relaxed);
+    if let Some(f) = left_file() {
+        let _ = std::fs::create_dir_all(f.parent().unwrap());
+        let _ = std::fs::write(f, if on { "1" } else { "0" });
+    }
+}
+
 /// Which screen edge the topbar sits on.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Side {
