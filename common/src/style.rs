@@ -404,3 +404,54 @@ mod tests {
         assert_eq!(Side::parse("top"), Side::Bottom);
     }
 }
+
+fn size_file() -> Option<PathBuf> {
+    std::env::var_os("ProgramData").map(|p| PathBuf::from(p).join("WinRust").join("bar-size.txt"))
+}
+
+static SIZE: AtomicU8 = AtomicU8::new(1);
+static SIZE_AT: AtomicU64 = AtomicU64::new(0);
+
+/// Height class of the topbar: 0 small, 1 normal (default), 2 large. Re-read once a second.
+pub fn bar_size() -> u8 {
+    if now_ms().saturating_sub(SIZE_AT.load(Relaxed)) > 1000 {
+        let v = size_file().and_then(|f| std::fs::read_to_string(f).ok()).and_then(|s| s.trim().parse::<u8>().ok()).filter(|v| *v <= 2).unwrap_or(1);
+        SIZE.store(v, Relaxed);
+        SIZE_AT.store(now_ms(), Relaxed);
+    }
+    SIZE.load(Relaxed)
+}
+
+pub fn set_bar_size(v: u8) {
+    SIZE.store(v.min(2), Relaxed);
+    SIZE_AT.store(now_ms(), Relaxed);
+    if let Some(f) = size_file() {
+        let _ = std::fs::create_dir_all(f.parent().unwrap());
+        let _ = std::fs::write(f, v.min(2).to_string());
+    }
+}
+
+fn mon_file() -> Option<PathBuf> {
+    std::env::var_os("ProgramData").map(|p| PathBuf::from(p).join("WinRust").join("alttab-monitor.txt"))
+}
+
+static MON: AtomicU8 = AtomicU8::new(0);
+static MON_AT: AtomicU64 = AtomicU64::new(0);
+
+/// Alt+Tab lists only the windows of the monitor the active window is on (off unless the file says 1). Re-read once a second.
+pub fn alttab_per_monitor() -> bool {
+    if now_ms().saturating_sub(MON_AT.load(Relaxed)) > 1000 {
+        MON.store(mon_file().and_then(|f| std::fs::read_to_string(f).ok()).is_some_and(|s| s.trim() == "1") as u8, Relaxed);
+        MON_AT.store(now_ms(), Relaxed);
+    }
+    MON.load(Relaxed) == 1
+}
+
+pub fn set_alttab_per_monitor(on: bool) {
+    MON.store(on as u8, Relaxed);
+    MON_AT.store(now_ms(), Relaxed);
+    if let Some(f) = mon_file() {
+        let _ = std::fs::create_dir_all(f.parent().unwrap());
+        let _ = std::fs::write(f, if on { "1" } else { "0" });
+    }
+}

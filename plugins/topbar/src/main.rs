@@ -240,7 +240,8 @@ fn sc(v: i32) -> i32 {
     (v as f32 * SCALE.get()) as i32
 }
 fn bar_h() -> i32 {
-    if vert() { sc(60) } else { sc(BAR_H) }
+    let d = [-6, 0, 8][i18n::style::bar_size() as usize % 3]; // small / normal / large
+    if vert() { sc(60 + d) } else { sc(BAR_H + d) }
 }
 /// Screen y of the bar's top edge when it is in place (bottom of the primary monitor, or its top in the tiling style).
 unsafe fn bar_top() -> i32 {
@@ -657,16 +658,31 @@ unsafe fn alt_tab(back: bool) {
     if IsWindowVisible(sw) == 0 {
         let mut v: Vec<HWND> = Vec::new();
         EnumWindows(Some(collect), &mut v as *mut _ as LPARAM); // z-order: the active window first, then the one before it
+        // per monitor: only the windows on the active window's monitor (when there is another one to switch to), shown on that monitor
+        let mut mon = RECT { left: 0, top: 0, right: GetSystemMetrics(SM_CXSCREEN), bottom: GetSystemMetrics(SM_CYSCREEN) };
+        if i18n::style::alttab_per_monitor() && !v.is_empty() {
+            let of = |w: HWND| MonitorFromWindow(w, MONITOR_DEFAULTTONEAREST);
+            let m0 = of(v[0]);
+            let mut mi: MONITORINFO = zeroed();
+            mi.cbSize = size_of::<MONITORINFO>() as u32;
+            if GetMonitorInfoW(m0, &mut mi) != 0 {
+                let same: Vec<HWND> = v.iter().copied().filter(|&w| of(w) == m0).collect();
+                if same.len() > 1 {
+                    v = same;
+                    mon = mi.rcMonitor;
+                }
+            }
+        }
         let n = v.len();
         if n == 0 {
             return SWITCHING.store(false, Relaxed);
         }
         SW.set((v, if n == 1 { 0 } else if back { n - 1 } else { 1 }));
-        let scr = GetSystemMetrics(SM_CXSCREEN);
+        let scr = mon.right - mon.left;
         let w = (n as i32 * sc(SW_CELL)).min(scr - sc(80)) + 2 * sc(SW_PAD);
         let h = sc(SW_PAD) + sc(SW_CELL) + sc(SW_TITLE) + sc(SW_PAD) / 2;
         SetWindowRgn(sw, CreateRoundRectRgn(0, 0, w + 1, h + 1, rr(18), rr(18)), 1);
-        SetWindowPos(sw, HWND_TOPMOST, (scr - w) / 2, (GetSystemMetrics(SM_CYSCREEN) - h) / 2, w, h, SWP_NOACTIVATE | SWP_SHOWWINDOW);
+        SetWindowPos(sw, HWND_TOPMOST, mon.left + (scr - w) / 2, mon.top + (mon.bottom - mon.top - h) / 2, w, h, SWP_NOACTIVATE | SWP_SHOWWINDOW);
     } else {
         SW.with_borrow_mut(|(v, i)| *i = if back { (*i + v.len() - 1) % v.len() } else { (*i + 1) % v.len() });
     }
@@ -1346,7 +1362,7 @@ fn layout(w: i32) -> Layout {
     let apps = (sys.0 - sc(24) * tray_count() as i32, sys.0);
     let margin = (w - apps.0) + sc(8); // keep the button group centered and clear of both sides
     let n = BTNS.with_borrow(|b| b.len()) as i32 + 1; // + the search slot
-    let bw = (((w - 2 * margin + gap) / n.max(1)) - gap).clamp(sc(16), sc(44));
+    let bw = (((w - 2 * margin + gap) / n.max(1)) - gap).clamp(sc(16), sc(44 + [-6, 0, 8][i18n::style::bar_size() as usize % 3]));
     // centered on search + Start + pins only: opening an unpinned window adds a button on the right instead of shifting Start left
     let fixed = (PINS.with_borrow(|p| p.len()) as i32 + 2).min(n);
     // ...but never so far right that the windows' buttons run into the tray: then the whole row shifts left
@@ -2508,6 +2524,10 @@ unsafe fn style_menu() {
         items.push(it);
     }
     items.push(fly::MItem::new(t!("Кнопки слева (как в Windows 10)", "Buttons on the left (like Windows 10)")).on(i18n::style::align_left()).sep());
+    items.push(fly::MItem::new(t!("Alt+Tab: только этот монитор", "Alt+Tab: this monitor only")).on(i18n::style::alttab_per_monitor()).sep());
+    for (k, n) in [t!("Панель: маленькая", "Bar size: small"), t!("Панель: обычная", "Bar size: normal"), t!("Панель: большая", "Bar size: large")].into_iter().enumerate() {
+        items.push(fly::MItem::new(n).on(i18n::style::bar_size() as usize == k));
+    }
     let head = (null_mut(), "\u{E713}", t!("Стиль", "Style").to_string(), t!("Вид панели и программ WinRust", "Look of the bar and the WinRust programs").to_string());
     let tile = i18n::style::ALL.len();
     fly::menu(tip_cx(&bar_layout(bar), GEAR), Some(head), items, move |i| match i18n::style::ALL.get(i) {
@@ -2518,6 +2538,14 @@ unsafe fn style_menu() {
         None if i == tile => tile_windows(),
         None if i == tile + 5 => {
             i18n::style::set_align_left(!i18n::style::align_left());
+            place(bar);
+            bar_anim(bar);
+        }
+        None if i == tile + 6 => {
+            i18n::style::set_alttab_per_monitor(!i18n::style::alttab_per_monitor());
+        }
+        None if i >= tile + 7 => {
+            i18n::style::set_bar_size((i - tile - 7) as u8);
             place(bar);
             bar_anim(bar);
         }
@@ -2583,6 +2611,31 @@ unsafe fn start_menu() {
 }
 
 /// Puts the open, not minimized windows side by side in the work area.
+/// A window dropped with the pointer on the screen edge snaps (Windows 11 style): left / right edge = that half of the monitor's
+/// work area, top edge = maximized. Only resizable windows; without Explorer nothing else does this.
+unsafe extern "system" fn snap_proc(_: windows_sys::Win32::UI::Accessibility::HWINEVENTHOOK, _: u32, w: HWND, id: i32, _: i32, _: u32, _: u32) {
+    if id != 0 || w.is_null() || IsWindowVisible(w) == 0 || GetWindowLongW(w, GWL_STYLE) as u32 & WS_THICKFRAME == 0 || IsZoomed(w) != 0 {
+        return;
+    }
+    let mut pt: POINT = zeroed();
+    GetCursorPos(&mut pt);
+    let mon = MonitorFromPoint(pt, MONITOR_DEFAULTTONEAREST);
+    let mut mi: MONITORINFO = zeroed();
+    mi.cbSize = size_of::<MONITORINFO>() as u32;
+    if GetMonitorInfoW(mon, &mut mi) == 0 {
+        return;
+    }
+    let (m, a) = (mi.rcMonitor, mi.rcWork);
+    let half = (a.right - a.left) / 2;
+    if pt.y <= m.top + 1 {
+        ShowWindow(w, SW_MAXIMIZE);
+    } else if pt.x <= m.left + 1 {
+        SetWindowPos(w, null_mut(), a.left, a.top, half, a.bottom - a.top, SWP_NOZORDER | SWP_NOACTIVATE);
+    } else if pt.x >= m.right - 2 {
+        SetWindowPos(w, null_mut(), a.left + half, a.top, half, a.bottom - a.top, SWP_NOZORDER | SWP_NOACTIVATE);
+    }
+}
+
 unsafe fn tile_windows() {
     let wins: Vec<HWND> = BTNS.with_borrow(|b| b.iter().flat_map(|b| b.wins.iter().copied()).filter(|&w| IsIconic(w) == 0).collect());
     if wins.is_empty() {
@@ -2970,6 +3023,7 @@ fn main() {
         BAR.store(hwnd as isize, Relaxed);
         bar_anim(hwnd); // the bar slides in (it starts hidden above the screen)
         SetTimer(hwnd, 3, 250, None); // fullscreen watch
+        windows_sys::Win32::UI::Accessibility::SetWinEventHook(0x000B, 0x000B, null_mut(), Some(snap_proc), 0, 0, 0); // EVENT_SYSTEM_MOVESIZEEND
         thread::spawn(|| {
             if !SetWindowsHookExW(WH_KEYBOARD_LL, Some(kb_hook), GetModuleHandleW(null()), 0).is_null() {
                 let mut m: MSG = zeroed();

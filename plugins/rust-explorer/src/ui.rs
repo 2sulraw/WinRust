@@ -27,6 +27,8 @@ const RELOAD: i32 = 4;
 const SEARCH: i32 = 5;
 const VIEW: i32 = 6;
 const PLUS: i32 = 7;
+const CMD: i32 = 10; // + 0..5: cut, copy, paste, rename, delete (Windows 11 command buttons)
+const CMD_GLYPHS: [&str; 5] = ["\u{E8C6}", "\u{E8C8}", "\u{E77F}", "\u{E8AC}", "\u{E74D}"];
 const TAB: i32 = 100; // + index
 const CLOSE: i32 = 200; // + index
 const CRUMB: i32 = 400; // + index: a part of the path in the address pill
@@ -373,7 +375,7 @@ unsafe extern "system" fn list_sub(h: HWND, m: u32, wp: WPARAM, lp: LPARAM, _id:
 
 // ---------- layout and hit testing ----------
 
-struct Layout { tabs: Vec<RECT>, close: Vec<RECT>, plus: RECT, back: RECT, fwd: RECT, up: RECT, reload: RECT, pill: RECT, search: RECT, view: RECT }
+struct Layout { tabs: Vec<RECT>, close: Vec<RECT>, plus: RECT, back: RECT, fwd: RECT, up: RECT, reload: RECT, pill: RECT, search: RECT, view: RECT, cmds: Vec<RECT> }
 
 fn rc(l: i32, t: i32, r: i32, b: i32) -> RECT { RECT { left: l, top: t, right: r, bottom: b } }
 
@@ -389,8 +391,10 @@ fn layout(cw: i32, n: usize) -> Layout {
     let view = rc(cw - sc(12) - bs, by0, cw - sc(12), by1);
     let search = rc(view.left - sc(4) - bs, by0, view.left - sc(4), by1);
     let reload = btn(3);
-    let pill = rc(reload.right + sc(8), by0, search.left - sc(8), by1);
-    Layout { tabs, close, plus, back: btn(0), fwd: btn(1), up: btn(2), reload, pill, search, view }
+    // command buttons only while the address pill keeps a usable width
+    let cmds: Vec<RECT> = if cw >= sc(900) { (4..9).map(btn).collect() } else { vec![] };
+    let pill = rc(cmds.last().unwrap_or(&reload).right + sc(8), by0, search.left - sc(8), by1);
+    Layout { tabs, close, plus, back: btn(0), fwd: btn(1), up: btn(2), reload, pill, search, view, cmds }
 }
 
 fn inside(r: &RECT, x: i32, y: i32) -> bool { x >= r.left && x < r.right && y >= r.top && y < r.bottom }
@@ -401,6 +405,7 @@ fn hit(l: &Layout, x: i32, y: i32) -> i32 {
     for (k, r) in [(BACK, &l.back), (FWD, &l.fwd), (UP, &l.up), (RELOAD, &l.reload), (SEARCH, &l.search), (VIEW, &l.view), (PLUS, &l.plus)] {
         if inside(r, x, y) { return k; }
     }
+    for (i, r) in l.cmds.iter().enumerate() { if inside(r, x, y) { return CMD + i as i32; } }
     NONE
 }
 
@@ -525,6 +530,11 @@ unsafe fn paint_chrome(hwnd: HWND) {
     for (k, r, g, enabled) in [(BACK, l.back, "\u{E72B}", can_back), (FWD, l.fwd, "\u{E72A}", can_fwd), (UP, l.up, "\u{E74A}", true), (RELOAD, l.reload, "\u{E72C}", true), (SEARCH, l.search, "\u{E721}", true), (VIEW, l.view, if thumbs { "\u{E8FD}" } else { "\u{E80A}" }, true)] {
         if enabled { glow(dc, k, r, pal().bg, pal().hover, sc(8), hot == k); }
         text(dc, g, r, if enabled { pal().text } else { off() }, DT_CENTER);
+    }
+
+    for (i, r) in l.cmds.iter().enumerate() {
+        glow(dc, CMD + i as i32, *r, pal().bg, pal().hover, sc(8), hot == CMD + i as i32);
+        text(dc, CMD_GLYPHS[i], *r, pal().text, DT_CENTER);
     }
 
     // address pill: accent outline while it is being edited
@@ -681,7 +691,7 @@ pub unsafe extern "system" fn proc(h: HWND, m: u32, wp: WPARAM, lp: LPARAM) -> L
             PRESS.set((k, now()));
             InvalidateRect(h, ptr::null(), 0);
             let (act, idx) = match k {
-                BACK => (4, 0), FWD => (5, 0), UP => (6, 0), RELOAD => (7, 0), SEARCH => (9, 0), VIEW => (8, 0), PLUS => (3, 0),
+                k if (CMD..CMD + 5).contains(&k) => (k as usize - CMD as usize + 10, 0), BACK => (4, 0), FWD => (5, 0), UP => (6, 0), RELOAD => (7, 0), SEARCH => (9, 0), VIEW => (8, 0), PLUS => (3, 0),
                 k if k >= CLOSE => (2, (k - CLOSE) as isize),
                 k => (if m == WM_MBUTTONDOWN { 2 } else { 1 }, (k - TAB) as isize), // middle click on a tab closes it
             };
