@@ -243,16 +243,27 @@ pub unsafe fn list_draw(lp: LPARAM) -> LRESULT {
                 let mut st = c.try_borrow_mut().ok()?;
                 let State { dir, rows, .. } = &mut *st;
                 let r = rows.get_mut(i)?;
-                if r.icon < 0 { r.icon = icon_of(&dir.join(&r.name), r.dir); }
-                Some((r.name.clone(), r.dir, r.time, r.size, r.icon))
+                if r.icon < 0 && !r.hdr { r.icon = icon_of(&dir.join(&r.name), r.dir); }
+                Some((r.name.clone(), r.dir, r.time, r.size, r.icon, r.hdr))
             });
-            let Some((name, is_dir, time, size, icon)) = row else { return CDRF_DODEFAULT as isize };
+            let Some((name, is_dir, time, size, icon, hdr)) = row else { return CDRF_DODEFAULT as isize };
             let mut r = RECT { left: LVIR_BOUNDS as i32, ..std::mem::zeroed() };
             SendMessageW(list, LVM_GETITEMRECT, i, &mut r as *mut _ as isize);
             let row_r = rc(0, r.top, cr.right, r.bottom);
             let b = CreateSolidBrush(listbg());
             FillRect(dc, &row_r, b);
             DeleteObject(b);
+            if hdr {
+                // a date heading: only its name, in the accent colour, never highlighted
+                let x0 = r.left;
+                if FONTS.get().0 == 0 { FONTS.set((font(14, 400, ui_face()), font(13, 400, ui_face()))); }
+                SetBkMode(dc, TRANSPARENT as i32);
+                let of = SelectObject(dc, FONTS.get().0 as HFONT);
+                text(dc, &name[1..], rc(x0 + sc(16), r.top + sc(8), cr.right, r.bottom), pal().accent, DT_LEFT);
+                fill(dc, rc(sc(16), r.bottom - 1, cr.right - sc(16), r.bottom), pal().line, 0);
+                SelectObject(dc, of);
+                return CDRF_SKIPDEFAULT as isize;
+            }
             let sel = SendMessageW(list, LVM_GETITEMSTATE, i, LVIS_SELECTED as isize) as u32 & LVIS_SELECTED != 0;
             let hot = ROWHOT.get() == i as isize;
             let focus = GetFocus() == list;
@@ -614,10 +625,11 @@ pub unsafe fn paint_status(h: HWND) {
             loop {
                 i = SendMessageW(s.list, LVM_GETNEXTITEM, i as usize, LVNI_SELECTED as isize);
                 let Some(r) = usize::try_from(i).ok().and_then(|i| s.rows.get(i)) else { break };
+                if r.hdr { continue; }
                 n += 1;
                 if !r.dir { bytes += r.size; }
             }
-            (s.rows.len(), n, bytes)
+            (s.rows.iter().filter(|r| !r.hdr).count(), n, bytes)
         })
     });
     if let Some((n, sel, bytes)) = snap {
