@@ -287,6 +287,17 @@ fn item_menu(h: HWND, dir: &Path, paths: &[PathBuf]) {
 
 /// "Hide desktop icons" is a marker file, so it survives restarts.
 fn icons_marker() -> PathBuf { PathBuf::from(env::var_os("APPDATA").unwrap_or_default()).join(r"WinRust\desktop-icons-hidden.txt") }
+fn small_marker() -> PathBuf { icons_marker().with_file_name("small-icons") }
+/// Desktop icon size: the system's large (32 px, default) or small (16 px) icons with a tighter grid. Same icon indexes in both.
+#[allow(unsafe_op_in_unsafe_fn)]
+unsafe fn apply_icon_size(list: HWND) {
+    let small = small_marker().exists();
+    let mut fi: SHFILEINFOW = std::mem::zeroed();
+    let il = SHGetFileInfoW(w("C:\\").as_ptr(), 0, &mut fi, size_of::<SHFILEINFOW>() as u32, SHGFI_SYSICONINDEX | if small { SHGFI_SMALLICON } else { SHGFI_LARGEICON });
+    put(list, LVM_SETIMAGELIST, LVSIL_NORMAL as usize, il as isize);
+    let (cx, cy) = if small { (76, 64) } else { (88, 96) };
+    put(list, LVM_SETICONSPACING, 0, ((ui::sc(cy) as isize) << 16) | ui::sc(cx) as isize);
+}
 fn icons_hidden() -> bool { icons_marker().exists() }
 fn set_icons_hidden(hide: bool) {
     let m = icons_marker();
@@ -303,6 +314,7 @@ unsafe fn bg_menu(h: HWND) {
     let disk = tool("wiztree");
     if disk.is_some() { AppendMenuW(m, MF_STRING, 6, w("Disk usage (WinRust Disk)").as_ptr()); }
     if desk() { for (id, l) in [(8usize, "Sort icons by name"), (9, "Sort icons by date"), (10, "Sort icons by size"), (11, "Arrange icons")] { AppendMenuW(m, MF_STRING, id, w(l).as_ptr()); } }
+    if desk() { AppendMenuW(m, MF_STRING, 12, w(if small_marker().exists() { "Large icons" } else { "Small icons" }).as_ptr()); }
     if desk() { AppendMenuW(m, MF_STRING, 7, w(if icons_hidden() { "Show desktop icons" } else { "Hide desktop icons" }).as_ptr()); }
     let mut pt: POINT = std::mem::zeroed();
     GetCursorPos(&mut pt);
@@ -311,6 +323,12 @@ unsafe fn bg_menu(h: HWND) {
     let dir = cur_dir();
     match id {
         7 => set_icons_hidden(!icons_hidden()),
+        12 => { // the grid changes with the size: icons are laid out again
+            let k = small_marker();
+            if k.exists() { let _ = fs::remove_file(&k); } else { let _ = fs::write(&k, "1"); }
+            apply_icon_size(ST.with_borrow(|st| st.list));
+            let _ = fs::remove_file(desk::pos_file());
+        }
         8..=11 => { // the saved cells are dropped: reload lays every icon out again, down the columns in sort order
             if id != 11 { SORT_COL.store([0, 1, 3][id as usize - 8], Relaxed); SORT_ASC.store(true, Relaxed); }
             let _ = fs::remove_file(desk::pos_file());
@@ -1335,7 +1353,7 @@ unsafe extern "system" fn proc(h: HWND, m: u32, wp: WPARAM, lp: LPARAM) -> LRESU
                     // system large icons; indexes are shared with the small list, so icon_of() works unchanged
                     let big = SHGetFileInfoW(w("C:\\").as_ptr(), 0, &mut fi, size_of::<SHFILEINFOW>() as u32, SHGFI_SYSICONINDEX | SHGFI_LARGEICON);
                     put(list, LVM_SETIMAGELIST, LVSIL_NORMAL as usize, big as isize);
-                    put(list, LVM_SETICONSPACING, 0, ((ui::sc(96) as isize) << 16) | ui::sc(88) as isize);
+                    apply_icon_size(list);
                     // transparent background (the desktop paints it) and shadowed labels, readable on light wallpapers too
                     let ex = LVS_EX_TRANSPARENTBKGND | 0x0080_0000; // LVS_EX_TRANSPARENTSHADOWTEXT
                     put(list, LVM_SETEXTENDEDLISTVIEWSTYLE, ex as usize, ex as isize);

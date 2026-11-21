@@ -216,6 +216,7 @@ pub fn msg() -> u32 {
 }
 
 /// Colours of one style, as COLORREF (0x00BBGGRR) like GDI wants them.
+#[derive(Clone, Copy)]
 pub struct Pal {
     pub bg: u32,
     pub line: u32,
@@ -252,7 +253,52 @@ pub const WARN: u32 = rgb(255, 214, 10);
 pub const BAD: u32 = rgb(255, 69, 58);
 
 pub fn pal() -> &'static Pal {
-    &PALS[ALL.iter().position(|&s| s == style()).unwrap_or(0)]
+    let base = &PALS[ALL.iter().position(|&s| s == style()).unwrap_or(0)];
+    match accent_override() {
+        None => base,
+        Some(c) => {
+            // one leaked copy per (style, colour): a handful at most, and pal() has to hand out a reference
+            static CACHE: std::sync::Mutex<Vec<(usize, u32, &'static Pal)>> = std::sync::Mutex::new(Vec::new());
+            let key = base as *const Pal as usize;
+            let mut v = CACHE.lock().unwrap();
+            if let Some(e) = v.iter().find(|e| e.0 == key && e.1 == c) {
+                return e.2;
+            }
+            let p: &'static Pal = Box::leak(Box::new(Pal { accent: c, ..*base }));
+            v.push((key, c, p));
+            p
+        }
+    }
+}
+
+fn accent_file() -> Option<PathBuf> {
+    std::env::var_os("ProgramData").map(|p| PathBuf::from(p).join("WinRust").join("accent.txt"))
+}
+
+static ACCENT: AtomicU32 = AtomicU32::new(u32::MAX); // COLORREF, u32::MAX = the style's own
+static ACCENT_AT: AtomicU64 = AtomicU64::new(0);
+
+/// A user-chosen accent colour (the file holds RRGGBB), None = the style's own. Re-read once a second.
+pub fn accent_override() -> Option<u32> {
+    if now_ms().saturating_sub(ACCENT_AT.load(Relaxed)) > 1000 {
+        let v = accent_file().and_then(|f| std::fs::read_to_string(f).ok()).and_then(|s| u32::from_str_radix(s.trim(), 16).ok()).filter(|v| *v <= 0xFFFFFF);
+        ACCENT.store(v.map_or(u32::MAX, |v| rgb((v >> 16) as u8, (v >> 8) as u8, v as u8)), Relaxed);
+        ACCENT_AT.store(now_ms(), Relaxed);
+    }
+    Some(ACCENT.load(Relaxed)).filter(|v| *v != u32::MAX)
+}
+
+/// `hex` = "RRGGBB", None = back to the style's accent. Tells the other WinRust windows to repaint.
+pub fn set_accent(hex: Option<&str>) {
+    if let Some(f) = accent_file() {
+        let _ = std::fs::create_dir_all(f.parent().unwrap());
+        match hex {
+            Some(h) => { let _ = std::fs::write(f, h); }
+            None => { let _ = std::fs::remove_file(f); }
+        }
+    }
+    ACCENT_AT.store(0, Relaxed);
+    unsafe { PostMessageW(HWND_BROADCAST, msg(), 0, 0) };
 }
 
 /// A raised surface (a card, a tile): pure white on the light style, a step up from the background on the dark ones.

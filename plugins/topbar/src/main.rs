@@ -133,6 +133,7 @@ static FULLSCREEN: AtomicBool = AtomicBool::new(false);
 static DESK_HIDE: AtomicBool = AtomicBool::new(false); // the desktop in front and the pointer away from the bar for 2 s
 static WIN_ALONE: AtomicBool = AtomicBool::new(false);
 static BAR: AtomicIsize = AtomicIsize::new(0); // the bar window, for the hook thread
+const WIN_NUM: u32 = WM_APP + 15; // posted by the keyboard hook: Win+1..9 (wp 0..8) = the n-th button of the bar
 const VOLKEY: u32 = WM_APP + 14; // posted by the keyboard hook: a volume key (wp 0 up, 1 down, 2 mute)
 const SNIP: u32 = WM_APP + 13; // posted by the keyboard hook: PrtSc / Win+Shift+S with no explorer to handle them
 static EXPLORER_UP: AtomicBool = AtomicBool::new(true); // explorer's taskbar exists (it handles PrtSc itself then); refreshed by the bar
@@ -1053,6 +1054,17 @@ unsafe fn fix_msix_pin(lnk: &[u16], target: &str) -> Option<String> {
     Some(new)
 }
 
+fn pin_order_file() -> PathBuf {
+    appdata_file("topbar-pin-order.txt")
+}
+
+/// The pins' current order, as the .lnk file names, one per line.
+unsafe fn save_pin_order() {
+    let text: String = PINS.with_borrow(|p| p.iter().map(|x| format!("{}
+", std::path::Path::new(&wstr_of(&x.lnk)).file_name().unwrap_or_default().to_string_lossy())).collect());
+    let _ = std::fs::write(pin_order_file(), text);
+}
+
 /// Pinned apps (the .lnk files Windows keeps for the taskbar) with their icons and target exe.
 unsafe fn load_pins() {
     let Some(appdata) = std::env::var_os("APPDATA") else { return };
@@ -1060,6 +1072,9 @@ unsafe fn load_pins() {
     let mut files: Vec<_> = std::fs::read_dir(dir).into_iter().flatten().flatten().map(|e| e.path()).filter(|p| p.extension().is_some_and(|e| e.eq_ignore_ascii_case("lnk"))).collect();
     files.sort();
     files.sort_by_key(|f| std::cmp::Reverse(lnk_uses(f))); // most used first (stable: ties stay alphabetical)
+    // an order the user set (Move left / right) wins; pins not in it keep the order above, after the listed ones
+    let order: Vec<String> = std::fs::read_to_string(pin_order_file()).unwrap_or_default().lines().map(|l| l.to_lowercase()).collect();
+    files.sort_by_key(|f| order.iter().position(|n| *n == f.file_name().unwrap_or_default().to_string_lossy().to_lowercase()).unwrap_or(usize::MAX));
     for f in files {
         let lnk = wide(&f.to_string_lossy());
         let target = lnk_target(&lnk);
@@ -1638,6 +1653,16 @@ unsafe extern "system" fn kb_hook(n: i32, w: WPARAM, l: LPARAM) -> LRESULT {
                         keybd_event(0xE8, 0, KEYEVENTF_KEYUP, 0);
                     }
                     PostMessageW(BAR.load(Relaxed) as HWND, SNIP, snip_key as usize, 0); // wp 1: PrtSc, 0: Win+Shift+S
+                }
+                return 1;
+            }
+            // Win+1..9: the n-th app button of the bar (Windows 11 taskbar behaviour)
+            if (0x31..=0x39).contains(&k.vkCode) && (held(VK_LWIN) || held(VK_RWIN)) && !held(VK_CONTROL) && !held(VK_MENU) && !held(VK_SHIFT) {
+                if down0 {
+                    WIN_ALONE.store(false, Relaxed);
+                    keybd_event(0xE8, 0, 0, 0); // a key between Win down and up: no Start menu on release
+                    keybd_event(0xE8, 0, KEYEVENTF_KEYUP, 0);
+                    PostMessageW(BAR.load(Relaxed) as HWND, WIN_NUM, k.vkCode as usize - 0x31, 0);
                 }
                 return 1;
             }
@@ -2308,6 +2333,8 @@ unsafe fn app_menu(hwnd: HWND, h: i32) {
         Win(HWND),
         Open,
         Pin,
+        Left,
+        Right,
         Start,
         Close,
         Kill,
@@ -2341,6 +2368,15 @@ unsafe fn app_menu(hwnd: HWND, h: i32) {
     } else if !exe.is_empty() {
         items.push((fly::MItem::new(t!("Закрепить на панели", "Pin to the bar")), A::Pin));
     }
+    if let Some(p) = pin.filter(|_| !lnk.is_empty()) {
+        let n = PINS.with_borrow(|p| p.len());
+        if p > 0 {
+            items.push((fly::MItem::new(if vert() { t!("Выше", "Move up") } else { t!("Сдвинуть влево", "Move left") }), A::Left));
+        }
+        if p + 1 < n {
+            items.push((fly::MItem::new(if vert() { t!("Ниже", "Move down") } else { t!("Сдвинуть вправо", "Move right") }), A::Right));
+        }
+    }
     if !launch.is_empty() {
         let s = fly::start_pinned(&launch);
         items.push((fly::MItem::new(if s { t!("Убрать из Пуска", "Remove from Start") } else { t!("Добавить в Пуск", "Add to Start") }), A::Start));
@@ -2368,6 +2404,16 @@ unsafe fn app_menu(hwnd: HWND, h: i32) {
                     None => {}
                 }
                 refresh_buttons(); // the buttons hold indices into PINS: a stale one would index past the end on the next paint
+            }
+            Some(a @ (A::Left | A::Right)) => {
+                // by path again; the new order is saved and load_pins takes it
+                if let Some(p) = PINS.with_borrow(|p| p.iter().position(|x| wstr_of(&x.lnk) == lnk)) {
+                    let to = if matches!(a, A::Left) { p.wrapping_sub(1) } else { p + 1 };
+                    if PINS.with_borrow_mut(|v| (to < v.len()).then(|| v.swap(p, to))).is_some() {
+                        save_pin_order();
+                        refresh_buttons();
+                    }
+                }
             }
             Some(A::Start) => fly::start_toggle(&launch),
             Some(A::Close) => wins.iter().for_each(|&w| close_window(w)),
@@ -2525,8 +2571,14 @@ unsafe fn style_menu() {
     }
     items.push(fly::MItem::new(t!("Кнопки слева (как в Windows 10)", "Buttons on the left (like Windows 10)")).on(i18n::style::align_left()).sep());
     items.push(fly::MItem::new(t!("Alt+Tab: только этот монитор", "Alt+Tab: this monitor only")).on(i18n::style::alttab_per_monitor()).sep());
+    let accents = [(t!("Акцент: по умолчанию", "Accent: default"), None), (t!("Акцент: синий", "Accent: blue"), Some("0A84FF")), (t!("Акцент: зелёный", "Accent: green"), Some("30D158")), (t!("Акцент: фиолетовый", "Accent: purple"), Some("BF5AF2")), (t!("Акцент: оранжевый", "Accent: orange"), Some("FF9F0A")), (t!("Акцент: красный", "Accent: red"), Some("FF453A")), (t!("Акцент: розовый", "Accent: pink"), Some("FF375F"))];
     for (k, n) in [t!("Панель: маленькая", "Bar size: small"), t!("Панель: обычная", "Bar size: normal"), t!("Панель: большая", "Bar size: large")].into_iter().enumerate() {
         items.push(fly::MItem::new(n).on(i18n::style::bar_size() as usize == k));
+    }
+    let cur = i18n::style::accent_override();
+    for (k, (n, hex)) in accents.iter().enumerate() {
+        let it = fly::MItem::new(*n).on(match hex { None => cur.is_none(), Some(h) => cur == u32::from_str_radix(h, 16).ok().map(|v| i18n::style::rgb((v >> 16) as u8, (v >> 8) as u8, v as u8)) });
+        items.push(if k == 0 { it.sep() } else { it });
     }
     let head = (null_mut(), "\u{E713}", t!("Стиль", "Style").to_string(), t!("Вид панели и программ WinRust", "Look of the bar and the WinRust programs").to_string());
     let tile = i18n::style::ALL.len();
@@ -2543,6 +2595,10 @@ unsafe fn style_menu() {
         }
         None if i == tile + 6 => {
             i18n::style::set_alttab_per_monitor(!i18n::style::alttab_per_monitor());
+        }
+        None if i >= tile + 10 => {
+            i18n::style::set_accent(accents.get(i - tile - 10).and_then(|a| a.1));
+            place(bar);
         }
         None if i >= tile + 7 => {
             i18n::style::set_bar_size((i - tile - 7) as u8);
@@ -2633,6 +2689,28 @@ unsafe extern "system" fn snap_proc(_: windows_sys::Win32::UI::Accessibility::HW
         SetWindowPos(w, null_mut(), a.left, a.top, half, a.bottom - a.top, SWP_NOZORDER | SWP_NOACTIVATE);
     } else if pt.x >= m.right - 2 {
         SetWindowPos(w, null_mut(), a.left + half, a.top, half, a.bottom - a.top, SWP_NOZORDER | SWP_NOACTIVATE);
+    }
+}
+
+/// Win+1..9: opens the n-th app button's pin, or brings its window up (a second press on the only window minimizes it,
+/// with several windows each press moves on to the next one).
+unsafe fn win_num(n: usize) {
+    let Some((wins, pin)) = BTNS.with_borrow(|b| b.get(n + 1).map(|b| (b.wins.clone(), b.pin))) else { return };
+    if wins.is_empty() {
+        if let Some(l) = pin.and_then(|p| PINS.with_borrow(|p2| p2.get(p).map(|x| x.lnk.clone()))) {
+            open(&l);
+        }
+        return;
+    }
+    let i = wins.iter().position(|&w| w == GetForegroundWindow());
+    let w = i.map_or(wins[0], |i| wins[(i + 1) % wins.len()]);
+    if wins.len() == 1 && i.is_some() {
+        ShowWindow(w, SW_MINIMIZE);
+    } else {
+        if IsIconic(w) != 0 {
+            ShowWindow(w, SW_RESTORE);
+        }
+        force_fg(w);
     }
 }
 
@@ -2818,6 +2896,7 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
         WM_TIMER if wp == 5 => bar_step(hwnd),
         WIN_START => fly::toggle(fly::Kind::Start),
         ALT_TAB => alt_tab(wp == 1),
+        WIN_NUM => win_num(wp),
         ALT_UP => alt_done(wp == 1),
         SNIP if wp == 1 => screenshot_notice(hwnd),
         SNIP if wp == 2 => clip_notice(hwnd),
