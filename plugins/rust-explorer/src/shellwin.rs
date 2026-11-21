@@ -1,7 +1,11 @@
 //! Makes the file manager findable as a shell window, so `SHOpenFolderAndSelectItems` ("Show in folder" in browsers, chat apps...)
 //! selects the file in it. Explorer finds the window in `IShellWindows` by folder, then asks it for `Document`, the folder-view
 //! service, and calls `IShellView::SelectItem`. Everything else the shell might ask for answers "not implemented".
-use std::{cell::RefCell, sync::Mutex, ffi::c_void, os::windows::ffi::OsStrExt, path::{Path, PathBuf}};
+//!
+//! Only a window that already exists when the app calls is found: when there is none, Windows starts the folder's handler and
+//! waits 20 s for a window of its own that never comes. So the always-running desktop process also registers stand-ins for
+//! the common folders (Downloads...); their `SelectItem` opens a real window on the file.
+use std::{cell::RefCell, ffi::c_void, os::windows::{ffi::OsStrExt, process::CommandExt}, path::{Path, PathBuf}, sync::Mutex};
 use windows::{
     core::*,
     Win32::{
@@ -14,48 +18,67 @@ use windows::{
 /// Posted to the window when the shell wants a file selected: lp = Box<PathBuf>. The shell calls us on an RPC thread, so the UI does the work.
 pub const WM_SHELL_SELECT: u32 = WM_APP + 6;
 
-struct Reg { sw: IShellWindows, cookie: i32 }
-thread_local! { static REG: RefCell<Option<Reg>> = const { RefCell::new(None) }; }
+struct Reg { sw: IShellWindows, cookie: i32, live: bool } // live: the window whose folder changes (not a stand-in)
+thread_local! { static REG: RefCell<Vec<Reg>> = const { RefCell::new(Vec::new()) }; }
 static DIR: Mutex<String> = Mutex::new(String::new());
 
 fn nope<T>() -> Result<T> { Err(E_NOTIMPL.into()) }
-fn url() -> String { format!("file:///{}", DIR.lock().unwrap().replace('\\', "/")) }
+fn url(dir: &str) -> String { format!("file:///{}", cur(dir).replace('\\', "/")) }
+/// The folder an entry stands for: its own, or (empty) the one the live window shows now.
+fn cur(dir: &str) -> String { if dir.is_empty() { DIR.lock().unwrap().clone() } else { dir.to_string() } }
 fn wide(s: &std::ffi::OsStr) -> Vec<u16> { s.encode_wide().chain([0]).collect() }
 
-/// Registers the window (call once, after the folder is shown, on the UI thread).
-pub fn register(hwnd: isize) {
-    let _ = (|| -> Result<()> {
-        unsafe {
-            let sw: IShellWindows = CoCreateInstance(&ShellWindows, None, CLSCTX_ALL)?;
-            let me: IWebBrowser2 = Browser { hwnd: hwnd as isize }.into();
-            let cookie = sw.Register(&me.cast::<IDispatch>()?, hwnd as i32, SWC_BROWSER)?;
-            REG.set(Some(Reg { sw, cookie }));
+fn pidl_variant(dir: &Path) -> Option<(VARIANT, *mut ITEMIDLIST)> {
+    let w = wide(dir.as_os_str());
+    unsafe {
+        let mut pidl = std::ptr::null_mut();
+        SHParseDisplayName(PCWSTR(w.as_ptr()), None, &mut pidl, 0, None).ok()?;
+        InitVariantFromBuffer(pidl as *const c_void, ILGetSize(Some(pidl))).ok().map(|v| (v, pidl))
+    }
+}
+
+fn add(hwnd: isize, dir: &Path, resident: bool) -> Result<()> {
+    unsafe {
+        let sw: IShellWindows = CoCreateInstance(&ShellWindows, None, CLSCTX_ALL)?;
+        let me: IWebBrowser2 = Browser { hwnd, dir: if resident { dir.to_string_lossy().into_owned() } else { String::new() }, resident }.into();
+        let cookie = sw.Register(&me.cast::<IDispatch>()?, hwnd as i32, SWC_BROWSER)?;
+        if let Some((v, pidl)) = pidl_variant(dir) {
+            let _ = sw.OnNavigate(cookie, &v);
+            CoTaskMemFree(Some(pidl as *const c_void));
         }
-        Ok(())
-    })();
+        REG.with_borrow_mut(|r| r.push(Reg { sw, cookie, live: !resident }));
+    }
+    Ok(())
+}
+
+/// Registers the window (call once, after the folder is shown, on the UI thread).
+pub fn register(hwnd: isize) { let _ = add(hwnd, Path::new(&DIR.lock().unwrap().clone()), false); }
+
+/// The always-running desktop process: stand-ins for `dirs`, so "Show in folder" there opens a window on the file.
+pub fn register_resident(dirs: &[PathBuf]) {
+    // the shell may bring this window to the front; a hidden one on its own keeps the desktop where it is
+    let h = unsafe { CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE, w!("STATIC"), w!(""), WS_POPUP, 0, 0, 0, 0, None, None, None, None) };
+    if let Ok(h) = h { for d in dirs { let _ = add(h.0 as isize, d, true); } }
 }
 
 /// The window now shows `dir`: the shell matches later requests against it.
 pub fn navigated(dir: &Path) {
     *DIR.lock().unwrap() = dir.to_string_lossy().into_owned();
-    REG.with_borrow(|r| {
-        let Some(r) = r else { return };
-        let w = wide(dir.as_os_str());
-        unsafe {
-            let mut pidl = std::ptr::null_mut();
-            if SHParseDisplayName(PCWSTR(w.as_ptr()), None, &mut pidl, 0, None).is_err() { return; }
-            if let Ok(v) = InitVariantFromBuffer(pidl as *const c_void, ILGetSize(Some(pidl))) { let _ = r.sw.OnNavigate(r.cookie, &v); }
-            CoTaskMemFree(Some(pidl as *const c_void));
+    REG.with_borrow(|rs| {
+        for r in rs.iter().filter(|r| r.live) {
+            if let Some((v, pidl)) = pidl_variant(dir) {
+                unsafe { let _ = r.sw.OnNavigate(r.cookie, &v); CoTaskMemFree(Some(pidl as *const c_void)); }
+            }
         }
     });
 }
 
 pub fn revoke() {
-    if let Some(r) = REG.take() { unsafe { let _ = r.sw.Revoke(r.cookie); } }
+    for r in REG.take() { unsafe { let _ = r.sw.Revoke(r.cookie); } }
 }
 
 #[implement(IWebBrowser2)]
-struct Browser { hwnd: isize }
+struct Browser { hwnd: isize, dir: String, resident: bool }
 impl IDispatch_Impl for Browser_Impl {
     fn GetTypeInfoCount(&self) -> Result<u32> { Ok(0) }
     fn GetTypeInfo(&self, _: u32, _: u32) -> Result<ITypeInfo> { nope() }
@@ -65,7 +88,7 @@ impl IDispatch_Impl for Browser_Impl {
 
 /// What `Document` returns: only the folder-view service is answered.
 #[implement(IDispatch, IServiceProvider)]
-struct Doc { hwnd: isize }
+struct Doc { hwnd: isize, dir: String, resident: bool }
 impl IDispatch_Impl for Doc_Impl {
     fn GetTypeInfoCount(&self) -> Result<u32> { Ok(0) }
     fn GetTypeInfo(&self, _: u32, _: u32) -> Result<ITypeInfo> { nope() }
@@ -74,13 +97,14 @@ impl IDispatch_Impl for Doc_Impl {
 }
 impl IServiceProvider_Impl for Doc_Impl {
     fn QueryService(&self, _svc: *const GUID, riid: *const GUID, out: *mut *mut c_void) -> Result<()> {
-        let v: IShellView = View { hwnd: self.hwnd }.into();
+       
+        let v: IShellView = View { hwnd: self.hwnd, dir: self.dir.clone(), resident: self.resident }.into();
         unsafe { v.query(&*riid, out).ok() }
     }
 }
 
 #[implement(IShellView)]
-struct View { hwnd: isize }
+struct View { hwnd: isize, dir: String, resident: bool }
 impl IOleWindow_Impl for View_Impl {
     fn GetWindow(&self) -> Result<HWND> { Ok(HWND(self.hwnd as *mut c_void)) }
     fn ContextSensitiveHelp(&self, _: BOOL) -> Result<()> { Ok(()) }
@@ -96,23 +120,28 @@ impl IShellView_Impl for View_Impl {
     fn AddPropertySheetPages(&self, _: u32, _: LPFNSVADDPROPSHEETPAGE, _: LPARAM) -> Result<()> { nope() }
     fn SaveViewState(&self) -> Result<()> { Ok(()) }
     fn SelectItem(&self, pidl: *const ITEMIDLIST, _flags: u32) -> Result<()> {
-        let path = item_path(pidl).ok_or(E_FAIL)?;
-        unsafe { PostMessageW(Some(HWND(self.hwnd as *mut c_void)), WM_SHELL_SELECT, WPARAM(0), LPARAM(Box::into_raw(Box::new(path)) as isize))? };
+       
+        let path = item_path(pidl, &cur(&self.dir)).ok_or(E_FAIL)?;
+        if self.resident {
+            let exe = std::env::current_exe().map_err(|_| E_FAIL)?;
+            std::process::Command::new(exe).raw_arg(format!("/select,\"{}\"", path.display())).spawn().map_err(|_| E_FAIL)?;
+        } else {
+            unsafe { PostMessageW(Some(HWND(self.hwnd as *mut c_void)), WM_SHELL_SELECT, WPARAM(0), LPARAM(Box::into_raw(Box::new(path)) as isize))? };
+        }
         Ok(())
     }
     fn GetItemObject(&self, _: &_SVGIO, _: *const GUID, _: *mut *mut c_void) -> Result<()> { nope() }
 }
 
 /// The file system path of the item the shell sent: relative to the folder we showed (or absolute).
-fn item_path(pidl: *const ITEMIDLIST) -> Option<PathBuf> {
+fn item_path(pidl: *const ITEMIDLIST, dir: &str) -> Option<PathBuf> {
     let name = |p: *const ITEMIDLIST| unsafe {
         let s = SHGetNameFromIDList(p, SIGDN_FILESYSPATH).ok()?;
         let r = s.to_string().ok();
         CoTaskMemFree(Some(s.0 as *const c_void));
         r.map(PathBuf::from)
     };
-    let dir = DIR.lock().unwrap().clone();
-    let w = wide(std::ffi::OsStr::new(&dir));
+    let w = wide(std::ffi::OsStr::new(dir));
     let joined = unsafe {
         let mut base = std::ptr::null_mut();
         SHParseDisplayName(PCWSTR(w.as_ptr()), None, &mut base, 0, None).ok().and_then(|_| {
@@ -123,7 +152,7 @@ fn item_path(pidl: *const ITEMIDLIST) -> Option<PathBuf> {
             p
         })
     };
-    joined.filter(|p| p.parent().is_some_and(|d| d.as_os_str().eq_ignore_ascii_case(&dir))).or_else(|| name(pidl))
+    joined.filter(|p| p.parent().is_some_and(|d| d.as_os_str().eq_ignore_ascii_case(dir))).or_else(|| name(pidl))
 }
 
 // the rest of the browser interface: nothing to offer
@@ -139,7 +168,7 @@ impl IWebBrowser_Impl for Browser_Impl {
     fn Application(&self) -> Result<windows::Win32::System::Com::IDispatch> { nope() }
     fn Parent(&self) -> Result<windows::Win32::System::Com::IDispatch> { nope() }
     fn Container(&self) -> Result<windows::Win32::System::Com::IDispatch> { nope() }
-    fn Document(&self) -> Result<windows::Win32::System::Com::IDispatch> { Ok(Doc { hwnd: self.hwnd }.into()) }
+    fn Document(&self) -> Result<windows::Win32::System::Com::IDispatch> { Ok(Doc { hwnd: self.hwnd, dir: self.dir.clone(), resident: self.resident }.into()) }
     fn TopLevelContainer(&self) -> Result<windows::Win32::Foundation::VARIANT_BOOL> { nope() }
     fn Type(&self) -> Result<BSTR> { nope() }
     fn Left(&self) -> Result<i32> { nope() }
@@ -150,8 +179,8 @@ impl IWebBrowser_Impl for Browser_Impl {
     fn SetWidth(&self, _width: i32) -> Result<()> { nope() }
     fn Height(&self) -> Result<i32> { nope() }
     fn SetHeight(&self, _height: i32) -> Result<()> { nope() }
-    fn LocationName(&self) -> Result<BSTR> { Ok(BSTR::from(url())) }
-    fn LocationURL(&self) -> Result<BSTR> { Ok(BSTR::from(url())) }
+    fn LocationName(&self) -> Result<BSTR> { Ok(BSTR::from(url(&self.dir))) }
+    fn LocationURL(&self) -> Result<BSTR> { Ok(BSTR::from(url(&self.dir))) }
     fn Busy(&self) -> Result<windows::Win32::Foundation::VARIANT_BOOL> { nope() }
 }
 impl IWebBrowserApp_Impl for Browser_Impl {

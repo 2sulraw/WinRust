@@ -1297,7 +1297,15 @@ unsafe extern "system" fn proc(h: HWND, m: u32, wp: WPARAM, lp: LPARAM) -> LRESU
                 let (start, pick) = if desk() { (sh::desktop_dirs().into_iter().next().unwrap_or_default(), None) } else { start_target() };
                 load(h, start);
                 if let Some(name) = pick { select_row(&name); }
-                if !desk() { shellwin::register(h as isize); shellwin::navigated(&cur_dir()); }
+                if desk() {
+                    use windows::Win32::UI::Shell::{FOLDERID_Desktop, FOLDERID_Documents, FOLDERID_Downloads, FOLDERID_Music, FOLDERID_Pictures, FOLDERID_Videos};
+                    let mut dirs: Vec<PathBuf> = [&FOLDERID_Desktop, &FOLDERID_Downloads, &FOLDERID_Documents, &FOLDERID_Pictures, &FOLDERID_Music, &FOLDERID_Videos].iter().filter_map(|id| sh::known_dir(id)).collect();
+                    dirs.extend(ui::pins());
+                    shellwin::register_resident(&dirs);
+                } else {
+                    shellwin::navigated(&cur_dir());
+                    shellwin::register(h as isize);
+                }
                 0
             }
             // the bar came, went or changed size (it sets the work area), or the screen changed: the icon list follows
