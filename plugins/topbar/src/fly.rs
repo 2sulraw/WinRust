@@ -158,7 +158,7 @@ pub fn load_apps() {
 }
 
 /// (display name, app id) of everything in the shell's Apps folder (what the Windows Start menu lists).
-fn apps_folder() -> Vec<(String, String)> {
+pub fn apps_folder() -> Vec<(String, String)> {
     use windows::Win32::{
         System::Com::CoTaskMemFree,
         UI::Shell::{BHID_EnumItems, FOLDERID_AppsFolder, IEnumShellItems, IShellItem, KF_FLAG_DEFAULT, SHGetKnownFolderItem, SIGDN, SIGDN_NORMALDISPLAY, SIGDN_PARENTRELATIVEPARSING},

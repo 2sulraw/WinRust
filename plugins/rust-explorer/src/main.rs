@@ -50,6 +50,7 @@ static GEN: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
 static TX: std::sync::OnceLock<std::sync::mpsc::Sender<(u32, usize, PathBuf)>> = std::sync::OnceLock::new();
 const WM_GO: u32 = WM_APP + 1; // address bar: Enter (wp 13) / Esc (wp 27)
 static EDIT_OLD: std::sync::atomic::AtomicIsize = std::sync::atomic::AtomicIsize::new(0);
+static LABEL_OLD: std::sync::atomic::AtomicIsize = std::sync::atomic::AtomicIsize::new(0); // the rename box (only one exists at a time)
 
 struct Row { name: String, dir: bool, size: u64, time: u64, icon: i32, thumb: i32 } // time: FILETIME ticks; thumb: -2 not asked, -1 asked, >=0 image-list index
 
@@ -835,6 +836,42 @@ mod sh {
         unsafe { strip(menu, &name) };
     }
 
+    unsafe extern "system" fn collect(h: HWND, lp: LPARAM) -> BOOL {
+        unsafe { (*(lp.0 as *mut Vec<isize>)).push(h.0 as isize); }
+        TRUE
+    }
+
+    fn top_windows() -> Vec<isize> {
+        let mut v: Vec<isize> = vec![];
+        unsafe { let _ = EnumWindows(Some(collect), LPARAM(&mut v as *mut _ as isize)); }
+        v
+    }
+
+    /// Dialogs the shell opens for a command ("Open with" > choose another app, Properties) can land partly off screen on some
+    /// setups. For a few seconds after the command, any new window that sticks out of its monitor is moved back inside.
+    fn keep_on_screen(before: Vec<isize>) {
+        std::thread::spawn(move || unsafe {
+            for _ in 0..40 {
+                std::thread::sleep(std::time::Duration::from_millis(150));
+                for h in top_windows().into_iter().filter(|h| !before.contains(h)) {
+                    let h = HWND(h as *mut c_void);
+                    let mut r = RECT::default();
+                    if !IsWindowVisible(h).as_bool() || IsZoomed(h).as_bool() || GetWindowRect(h, &mut r).is_err() || r.right <= r.left { continue; }
+                    let mut mi = windows::Win32::Graphics::Gdi::MONITORINFO { cbSize: size_of::<windows::Win32::Graphics::Gdi::MONITORINFO>() as u32, ..Default::default() };
+                    let mon = windows::Win32::Graphics::Gdi::MonitorFromWindow(h, windows::Win32::Graphics::Gdi::MONITOR_DEFAULTTONEAREST);
+                    if !windows::Win32::Graphics::Gdi::GetMonitorInfoW(mon, &mut mi).as_bool() { continue; }
+                    let a = mi.rcWork;
+                    if r.right - r.left > a.right - a.left || r.bottom - r.top > a.bottom - a.top { continue; } // maximized-like: not a stray dialog
+                    let x = r.left.min(a.right - (r.right - r.left)).max(a.left);
+                    let y = r.top.min(a.bottom - (r.bottom - r.top)).max(a.top);
+                    if (x, y) != (r.left, r.top) {
+                        let _ = SetWindowPos(h, None, x, y, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+                    }
+                }
+            }
+        });
+    }
+
     pub fn show(h: *mut c_void, paths: &[PathBuf], extra: &[(u32, &str)]) -> Result<Option<u32>> {
         unsafe {
             let hwnd = HWND(h);
@@ -869,7 +906,9 @@ mod sh {
                     ptInvoke: pt,
                     ..Default::default()
                 };
+                let before = top_windows();
                 cm.InvokeCommand(&ci as *const _ as *const CMINVOKECOMMANDINFO)?;
+                keep_on_screen(before);
             }
             DestroyMenu(menu)?;
             Ok(None)
@@ -1221,6 +1260,32 @@ fn drag_log(s: &str) {
     if let Ok(mut f) = fs::OpenOptions::new().create(true).append(true).open(p) { let _ = writeln!(f, "{s}"); }
 }
 
+/// Ctrl+Backspace in an edit box (it arrives as WM_CHAR 0x7F): deletes back to the start of the previous word.
+unsafe fn delete_word(h: HWND) {
+    unsafe {
+        let (mut a, mut b) = (0u32, 0u32);
+        SendMessageW(h, EM_GETSEL, &mut a as *mut u32 as usize, &mut b as *mut u32 as isize);
+        if a == b {
+            let n = GetWindowTextLengthW(h) as usize;
+            let mut buf = vec![0u16; n + 1];
+            GetWindowTextW(h, buf.as_mut_ptr(), n as i32 + 1);
+            let mut i = a as usize;
+            while i > 0 && buf[i - 1] == b' ' as u16 { i -= 1; }
+            while i > 0 && buf[i - 1] != b' ' as u16 { i -= 1; }
+            SendMessageW(h, EM_SETSEL, i, a as isize);
+        }
+        SendMessageW(h, EM_REPLACESEL, 1, w("").as_ptr() as isize);
+    }
+}
+
+/// Rename box subclass: only Ctrl+Backspace is ours.
+unsafe extern "system" fn label_proc(h: HWND, m: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
+    unsafe {
+        if m == WM_CHAR && wp == 0x7F { delete_word(h); return 0; }
+        CallWindowProcW(std::mem::transmute::<isize, WNDPROC>(LABEL_OLD.load(std::sync::atomic::Ordering::Relaxed)), h, m, wp, lp)
+    }
+}
+
 /// Address bar subclass: Enter / Esc go to the main window, everything else is the normal edit control.
 unsafe extern "system" fn edit_proc(h: HWND, m: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
     unsafe {
@@ -1228,6 +1293,7 @@ unsafe extern "system" fn edit_proc(h: HWND, m: u32, wp: WPARAM, lp: LPARAM) -> 
             if m == WM_KEYDOWN { PostMessageW(GetAncestor(h, GA_ROOT), WM_GO, wp, 0); }
             return 0; // WM_CHAR swallowed so there is no beep
         }
+        if m == WM_CHAR && wp == 0x7F { delete_word(h); return 0; }
         CallWindowProcW(std::mem::transmute::<isize, WNDPROC>(EDIT_OLD.load(std::sync::atomic::Ordering::Relaxed)), h, m, wp, lp)
     }
 }
@@ -1436,8 +1502,8 @@ unsafe extern "system" fn proc(h: HWND, m: u32, wp: WPARAM, lp: LPARAM) -> LRESU
                             0x08 => if let Some(p) = dir.parent() { load(h, p.to_path_buf()) },
                             0x1B if jobs::busy() => { jobs::cancel(); return 0; } // Esc stops packing / unpacking
                             0x2E if !paths.is_empty() && !in_zip() => { let _ = sh::fileop(h, sh::Op::Delete, &paths, &dir); }
-                            // Space on a picture: a quick look in photoview (pictures only: videos and text are not previewed yet)
-                            0x20 if !desk() => if let (Some(p), Some(exe)) = (paths.first().filter(|p| is_pic(p)), tool("photoview")) { let _ = std::process::Command::new(exe).arg(p).spawn(); },
+                            // Space: a quick look. Pictures open in photoview, videos / text / anything else in its default app
+                            0x20 if !desk() => if let Some(p) = paths.first().filter(|p| p.is_file()) { activate(h, p.clone(), false); },
                             0x71 if !in_zip() => {
                                 let i = put(list, LVM_GETNEXTITEM, usize::MAX, LVNI_SELECTED as isize);
                                 if i >= 0 { put(list, LVM_EDITLABELW, i as usize, 0); }
@@ -1476,6 +1542,10 @@ unsafe extern "system" fn proc(h: HWND, m: u32, wp: WPARAM, lp: LPARAM) -> LRESU
                             _ => return 0,
                         }
                         reload(h);
+                    }
+                    LVN_BEGINLABELEDITW => {
+                        let e = SendMessageW(ST.with_borrow(|st| st.list), LVM_GETEDITCONTROL, 0, 0) as HWND;
+                        if e != 0 as HWND { LABEL_OLD.store(SetWindowLongPtrW(e, GWLP_WNDPROC, label_proc as *const () as isize), std::sync::atomic::Ordering::Relaxed); }
                     }
                     LVN_ENDLABELEDITW => {
                         let it = &(*(lp as *const NMLVDISPINFOW)).item;

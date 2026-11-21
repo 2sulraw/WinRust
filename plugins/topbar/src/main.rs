@@ -2224,6 +2224,21 @@ unsafe fn close_window(w: HWND) {
     }
 }
 
+/// App id of the Store app a .lnk of a pin points into (its package folder), None for anything else.
+unsafe fn msix_app_id(lnk: &str) -> Option<String> {
+    let (family, _) = msix_family(&lnk_target(&wide(lnk)))?;
+    let prefix = format!("{family}!").to_lowercase();
+    fly::apps_folder().into_iter().map(|a| a.1).find(|id| id.to_lowercase().starts_with(&prefix))
+}
+
+/// Starts a Store app by its app id. false = it did not start (the caller falls back to explorer).
+unsafe fn activate_app(aumid: &str) -> bool {
+    use windows::Win32::UI::Shell::{ACTIVATEOPTIONS, ApplicationActivationManager, IApplicationActivationManager};
+    CoCreateInstance::<_, IApplicationActivationManager>(&ApplicationActivationManager, None, CLSCTX_ALL)
+        .and_then(|m| m.ActivateApplication(PCWSTR(wide(aumid).as_ptr()), PCWSTR::null(), ACTIVATEOPTIONS(0)))
+        .is_ok()
+}
+
 /// Opens a file, shortcut or URI through explorer, which starts it with the desktop user's normal token: the bar itself
 /// may run elevated (see the launcher), and everything started from it must not inherit that.
 unsafe fn open(path: &[u16]) {
@@ -2234,6 +2249,12 @@ unsafe fn open(path: &[u16]) {
     }
     if p.to_lowercase().starts_with("ms-settings:") {
         return winrust_common::settings::open(&p); // needs Explorer as shell: it is started for the time Settings is open
+    }
+    // Store (MSIX) apps: by app id through the activation manager. A path into the protected package folder ("no app
+    // associated") and shell:AppsFolder via explorer ("class not registered" when Explorer is not the shell) both fail.
+    let aumid = if p.to_lowercase().starts_with(r"shell:appsfolder\") { Some(p[r"shell:appsfolder\".len()..].to_string()) } else { msix_app_id(&p) };
+    if aumid.is_some_and(|id| activate_app(&id)) {
+        return;
     }
     // Always through explorer.exe: it starts the target with the desktop user's normal token. ShellExecuteW from here would
     // inherit this bar's admin rights, and an elevated app cannot receive files dragged in from normal windows (UIPI), and
