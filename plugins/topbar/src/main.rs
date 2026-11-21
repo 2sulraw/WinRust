@@ -818,6 +818,7 @@ unsafe fn hide_taskbar_if_shown() {
 
 /// Reserves the bottom strip of the primary monitor (maximized windows stay above it).
 unsafe fn place(hwnd: HWND) {
+    apply_opacity(hwnd);
     let (cx, cy) = (GetSystemMetrics(SM_CXSCREEN), GetSystemMetrics(SM_CYSCREEN));
     let mut ab: APPBARDATA = zeroed();
     ab.cbSize = size_of::<APPBARDATA>() as u32;
@@ -2571,15 +2572,10 @@ unsafe fn style_menu() {
     }
     items.push(fly::MItem::new(t!("Кнопки слева (как в Windows 10)", "Buttons on the left (like Windows 10)")).on(i18n::style::align_left()).sep());
     items.push(fly::MItem::new(t!("Alt+Tab: только этот монитор", "Alt+Tab: this monitor only")).on(i18n::style::alttab_per_monitor()).sep());
-    let accents = [(t!("Акцент: по умолчанию", "Accent: default"), None), (t!("Акцент: синий", "Accent: blue"), Some("0A84FF")), (t!("Акцент: зелёный", "Accent: green"), Some("30D158")), (t!("Акцент: фиолетовый", "Accent: purple"), Some("BF5AF2")), (t!("Акцент: оранжевый", "Accent: orange"), Some("FF9F0A")), (t!("Акцент: красный", "Accent: red"), Some("FF453A")), (t!("Акцент: розовый", "Accent: pink"), Some("FF375F"))];
     for (k, n) in [t!("Панель: маленькая", "Bar size: small"), t!("Панель: обычная", "Bar size: normal"), t!("Панель: большая", "Bar size: large")].into_iter().enumerate() {
         items.push(fly::MItem::new(n).on(i18n::style::bar_size() as usize == k));
     }
-    let cur = i18n::style::accent_override();
-    for (k, (n, hex)) in accents.iter().enumerate() {
-        let it = fly::MItem::new(*n).on(match hex { None => cur.is_none(), Some(h) => cur == u32::from_str_radix(h, 16).ok().map(|v| i18n::style::rgb((v >> 16) as u8, (v >> 8) as u8, v as u8)) });
-        items.push(if k == 0 { it.sep() } else { it });
-    }
+    items.push(fly::MItem::new(t!("Свои цвета и прозрачность…", "Customize colors and transparency…")).sep());
     let head = (null_mut(), "\u{E713}", t!("Стиль", "Style").to_string(), t!("Вид панели и программ WinRust", "Look of the bar and the WinRust programs").to_string());
     let tile = i18n::style::ALL.len();
     fly::menu(tip_cx(&bar_layout(bar), GEAR), Some(head), items, move |i| match i18n::style::ALL.get(i) {
@@ -2596,10 +2592,7 @@ unsafe fn style_menu() {
         None if i == tile + 6 => {
             i18n::style::set_alttab_per_monitor(!i18n::style::alttab_per_monitor());
         }
-        None if i >= tile + 10 => {
-            i18n::style::set_accent(accents.get(i - tile - 10).and_then(|a| a.1));
-            place(bar);
-        }
+        None if i == tile + 10 => custom_menu(),
         None if i >= tile + 7 => {
             i18n::style::set_bar_size((i - tile - 7) as u8);
             place(bar);
@@ -2615,6 +2608,59 @@ unsafe fn style_menu() {
             place(bar); // the reserved strip comes or goes with it
             bar_anim(bar);
         }
+    });
+}
+
+/// Bar transparency from the Customize menu (the window is layered; 100 % = opaque).
+unsafe fn apply_opacity(hwnd: HWND) {
+    SetLayeredWindowAttributes(hwnd, 0, (255 * i18n::style::bar_opacity() as u32 / 100) as u8, LWA_ALPHA);
+}
+
+/// The user's own look: every colour of the bar and the WinRust windows, and the bar's transparency. Each colour opens
+/// the Windows colour dialog; "Reset" goes back to the chosen style.
+unsafe fn custom_menu() {
+    use windows_sys::Win32::UI::Controls::Dialogs::{CC_FULLOPEN, CC_RGBINIT, CHOOSECOLORW, ChooseColorW};
+    let bar = BAR.load(Relaxed) as HWND;
+    let colors = [
+        t!("Фон", "Background"),
+        t!("Линии и рамки", "Lines and borders"),
+        t!("Наведение", "Hover"),
+        t!("Нажатие и выбранное", "Pressed and selected"),
+        t!("Акцент", "Accent"),
+        t!("Текст", "Text"),
+        t!("Второстепенный текст", "Secondary text"),
+    ];
+    let cur = i18n::style::custom_colors().unwrap_or([u32::MAX; 7]);
+    let p = i18n::style::pal();
+    let now = [p.bg, p.line, p.hover, p.active, p.accent, p.text, p.dim]; // what is shown now: the dialog starts there
+    let mut items: Vec<fly::MItem> = colors.iter().enumerate().map(|(i, n)| fly::MItem::new(format!("{n}…")).on(cur[i] != u32::MAX)).collect();
+    let pct = [100u8, 90, 80, 70, 60, 50, 40];
+    for (k, p) in pct.iter().enumerate() {
+        let it = fly::MItem::new(tf!("Прозрачность панели: {}%", "Bar opacity: {}%", p)).on(i18n::style::bar_opacity() == *p);
+        items.push(if k == 0 { it.sep() } else { it });
+    }
+    items.push(fly::MItem::new(t!("Сбросить всё", "Reset everything")).sep());
+    let head = (null_mut(), "\u{E790}", t!("Свой стиль", "Custom look").to_string(), t!("Цвета и прозрачность, как вам нравится", "Colors and transparency, your way").to_string());
+    fly::menu(tip_cx(&bar_layout(bar), GEAR), Some(head), items, move |i| {
+        if i < colors.len() {
+            static CUST: std::sync::Mutex<[u32; 16]> = std::sync::Mutex::new([0xFFFFFF; 16]);
+            let mut cust = CUST.lock().unwrap();
+            let mut cc: CHOOSECOLORW = zeroed();
+            cc.lStructSize = size_of::<CHOOSECOLORW>() as u32;
+            cc.hwndOwner = bar;
+            cc.rgbResult = now[i];
+            cc.lpCustColors = cust.as_mut_ptr();
+            cc.Flags = CC_RGBINIT | CC_FULLOPEN;
+            if ChooseColorW(&mut cc) != 0 {
+                i18n::style::set_custom_color(i, Some(cc.rgbResult));
+            }
+        } else if i < colors.len() + pct.len() {
+            i18n::style::set_bar_opacity(pct[i - colors.len()]);
+        } else {
+            i18n::style::reset_custom();
+        }
+        apply_opacity(bar);
+        InvalidateRect(bar, null(), 0);
     });
 }
 
@@ -3060,7 +3106,7 @@ fn main() {
         let class = wide("topbar");
         let wc = WNDCLASSW { lpfnWndProc: Some(wndproc), hInstance: hi, hCursor: LoadCursorW(null_mut(), IDC_ARROW), lpszClassName: class.as_ptr(), ..zeroed() };
         RegisterClassW(&wc);
-        let hwnd = CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_TOPMOST | WS_EX_NOACTIVATE, class.as_ptr(), class.as_ptr(), WS_POPUP, 0, 0, GetSystemMetrics(SM_CXSCREEN), bar_h(), null_mut(), null_mut(), hi, null());
+        let hwnd = CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_TOPMOST | WS_EX_NOACTIVATE | WS_EX_LAYERED, class.as_ptr(), class.as_ptr(), WS_POPUP, 0, 0, GetSystemMetrics(SM_CXSCREEN), bar_h(), null_mut(), null_mut(), hi, null());
         // Our own Shell_TrayWnd (hidden, topmost, so apps find it before explorer's): apps register their tray icons here.
         let tc = wide("Shell_TrayWnd");
         RegisterClassW(&WNDCLASSW { lpfnWndProc: Some(tray_proc), hInstance: hi, lpszClassName: tc.as_ptr(), ..zeroed() });

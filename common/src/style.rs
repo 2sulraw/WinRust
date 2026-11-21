@@ -254,51 +254,119 @@ pub const BAD: u32 = rgb(255, 69, 58);
 
 pub fn pal() -> &'static Pal {
     let base = &PALS[ALL.iter().position(|&s| s == style()).unwrap_or(0)];
-    match accent_override() {
-        None => base,
-        Some(c) => {
-            // one leaked copy per (style, colour): a handful at most, and pal() has to hand out a reference
-            static CACHE: std::sync::Mutex<Vec<(usize, u32, &'static Pal)>> = std::sync::Mutex::new(Vec::new());
-            let key = base as *const Pal as usize;
-            let mut v = CACHE.lock().unwrap();
-            if let Some(e) = v.iter().find(|e| e.0 == key && e.1 == c) {
-                return e.2;
+    let Some(o) = custom_colors() else { return base };
+    // one leaked copy per (style, overrides): a handful at most, and pal() has to hand out a reference
+    static CACHE: std::sync::Mutex<Vec<(usize, [u32; 7], &'static Pal)>> = std::sync::Mutex::new(Vec::new());
+    let key = base as *const Pal as usize;
+    let mut v = CACHE.lock().unwrap();
+    if let Some(e) = v.iter().find(|e| e.0 == key && e.1 == o) {
+        return e.2;
+    }
+    let p: &'static Pal = Box::leak(Box::new(custom_pal(base, o)));
+    v.push((key, o, p));
+    p
+}
+
+/// The style's palette with the user's colours on top. Lines, hover and pressed colours that were not set follow the
+/// background and text colours, so changing just the background still gives a consistent bar.
+fn custom_pal(base: &Pal, o: [u32; 7]) -> Pal {
+    let get = |i: usize, d: u32| if o[i] == u32::MAX { d } else { o[i] };
+    let bg = get(0, base.bg);
+    let text = get(5, base.text);
+    let derive = o[0] != u32::MAX || o[5] != u32::MAX;
+    Pal {
+        bg,
+        line: get(1, if derive { mix(bg, text, 0.12) } else { base.line }),
+        hover: get(2, if derive { mix(bg, text, 0.07) } else { base.hover }),
+        active: get(3, if derive { mix(bg, text, 0.12) } else { base.active }),
+        accent: get(4, base.accent),
+        text,
+        dim: get(6, if derive { mix(bg, text, 0.55) } else { base.dim }),
+    }
+}
+
+/// Names of the colours the user can set, in the order of `Pal`'s fields (bg, line, hover, active, accent, text, dim).
+pub const COLOR_NAMES: [&str; 7] = ["bg", "line", "hover", "active", "accent", "text", "dim"];
+
+fn colors_file() -> Option<PathBuf> {
+    std::env::var_os("ProgramData").map(|p| PathBuf::from(p).join("WinRust").join("colors.txt"))
+}
+
+static COLORS: std::sync::Mutex<[u32; 7]> = std::sync::Mutex::new([u32::MAX; 7]); // COLORREF, u32::MAX = the style's own
+static COLORS_AT: AtomicU64 = AtomicU64::new(0);
+
+fn read_colors() -> [u32; 7] {
+    let mut o = [u32::MAX; 7];
+    for l in colors_file().and_then(|f| std::fs::read_to_string(f).ok()).unwrap_or_default().lines() {
+        if let Some((k, v)) = l.split_once('=') {
+            if let (Some(i), Ok(v)) = (COLOR_NAMES.iter().position(|n| *n == k.trim()), u32::from_str_radix(v.trim(), 16)) {
+                if v <= 0xFFFFFF { o[i] = rgb((v >> 16) as u8, (v >> 8) as u8, v as u8); }
             }
-            let p: &'static Pal = Box::leak(Box::new(Pal { accent: c, ..*base }));
-            v.push((key, c, p));
-            p
         }
     }
+    o
 }
 
-fn accent_file() -> Option<PathBuf> {
-    std::env::var_os("ProgramData").map(|p| PathBuf::from(p).join("WinRust").join("accent.txt"))
-}
-
-static ACCENT: AtomicU32 = AtomicU32::new(u32::MAX); // COLORREF, u32::MAX = the style's own
-static ACCENT_AT: AtomicU64 = AtomicU64::new(0);
-
-/// A user-chosen accent colour (the file holds RRGGBB), None = the style's own. Re-read once a second.
-pub fn accent_override() -> Option<u32> {
-    if now_ms().saturating_sub(ACCENT_AT.load(Relaxed)) > 1000 {
-        let v = accent_file().and_then(|f| std::fs::read_to_string(f).ok()).and_then(|s| u32::from_str_radix(s.trim(), 16).ok()).filter(|v| *v <= 0xFFFFFF);
-        ACCENT.store(v.map_or(u32::MAX, |v| rgb((v >> 16) as u8, (v >> 8) as u8, v as u8)), Relaxed);
-        ACCENT_AT.store(now_ms(), Relaxed);
+/// The user's colours (one per `COLOR_NAMES`, u32::MAX = not set), None when none is set. Re-read once a second.
+pub fn custom_colors() -> Option<[u32; 7]> {
+    let mut c = COLORS.lock().unwrap();
+    if now_ms().saturating_sub(COLORS_AT.load(Relaxed)) > 1000 {
+        *c = read_colors();
+        COLORS_AT.store(now_ms(), Relaxed);
     }
-    Some(ACCENT.load(Relaxed)).filter(|v| *v != u32::MAX)
+    c.iter().any(|v| *v != u32::MAX).then_some(*c)
 }
 
-/// `hex` = "RRGGBB", None = back to the style's accent. Tells the other WinRust windows to repaint.
-pub fn set_accent(hex: Option<&str>) {
-    if let Some(f) = accent_file() {
+/// Sets colour `i` (COLORREF; None = back to the style's own) and tells the other WinRust windows to repaint.
+pub fn set_custom_color(i: usize, c: Option<u32>) {
+    let mut cur = read_colors();
+    cur[i] = c.unwrap_or(u32::MAX);
+    save_colors(cur);
+}
+
+/// Back to the style's own colours and opacity.
+pub fn reset_custom() {
+    save_colors([u32::MAX; 7]);
+    set_bar_opacity(100);
+}
+
+fn save_colors(c: [u32; 7]) {
+    let text: String = c.iter().enumerate().filter(|(_, v)| **v != u32::MAX).map(|(i, v)| format!("{}={:02X}{:02X}{:02X}
+", COLOR_NAMES[i], v & 255, (v >> 8) & 255, (v >> 16) & 255)).collect();
+    if let Some(f) = colors_file() {
         let _ = std::fs::create_dir_all(f.parent().unwrap());
-        match hex {
-            Some(h) => { let _ = std::fs::write(f, h); }
-            None => { let _ = std::fs::remove_file(f); }
-        }
+        let _ = if text.is_empty() { std::fs::remove_file(f) } else { std::fs::write(f, text) };
     }
-    ACCENT_AT.store(0, Relaxed);
+    *COLORS.lock().unwrap() = c;
+    COLORS_AT.store(now_ms(), Relaxed);
     unsafe { PostMessageW(HWND_BROADCAST, msg(), 0, 0) };
+}
+
+fn opacity_file() -> Option<PathBuf> {
+    std::env::var_os("ProgramData").map(|p| PathBuf::from(p).join("WinRust").join("bar-opacity.txt"))
+}
+
+static OPACITY: AtomicU8 = AtomicU8::new(100);
+static OPACITY_AT: AtomicU64 = AtomicU64::new(0);
+
+/// How opaque the topbar is, percent (30..=100). Re-read once a second.
+pub fn bar_opacity() -> u8 {
+    if now_ms().saturating_sub(OPACITY_AT.load(Relaxed)) > 1000 {
+        let v = opacity_file().and_then(|f| std::fs::read_to_string(f).ok()).and_then(|s| s.trim().parse::<u8>().ok()).map_or(100, |v| v.clamp(30, 100));
+        OPACITY.store(v, Relaxed);
+        OPACITY_AT.store(now_ms(), Relaxed);
+    }
+    OPACITY.load(Relaxed)
+}
+
+pub fn set_bar_opacity(v: u8) {
+    let v = v.clamp(30, 100);
+    OPACITY.store(v, Relaxed);
+    OPACITY_AT.store(now_ms(), Relaxed);
+    if let Some(f) = opacity_file() {
+        let _ = std::fs::create_dir_all(f.parent().unwrap());
+        let _ = std::fs::write(f, v.to_string());
+    }
 }
 
 /// A raised surface (a card, a tile): pure white on the light style, a step up from the background on the dark ones.
