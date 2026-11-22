@@ -1100,12 +1100,14 @@ unsafe fn taskband_links() -> Vec<((String, String), PathBuf)> {
         if key.0.is_empty() || gone.contains(&key_line(&key)) {
             continue;
         }
-        // most entries point at the pin's own .lnk in the TaskBar folder: that file is the pin (it only gives the order);
-        // one whose file is gone (File Explorer replaced by rust-explorer) is no pin at all
+        // most entries point at a .lnk (the pin's own in the TaskBar folder, or one in ImplicitAppShortcuts for a browser
+        // profile): that file is the pin; one whose file is gone (File Explorer replaced by rust-explorer) is no pin at all.
+        // The unpinned list holds the resolved key (unpin() reads it from that same file), so it is checked after resolving.
         if key.0.ends_with(".lnk") {
             let real = PathBuf::from(&key.0);
-            if real.is_file() {
-                out.push((pin_key(&wide(&real.to_string_lossy())), real));
+            let rk = pin_key(&wide(&real.to_string_lossy()));
+            if real.is_file() && !rk.0.is_empty() && !gone.contains(&key_line(&rk)) {
+                out.push((rk, real));
             }
             continue;
         }
