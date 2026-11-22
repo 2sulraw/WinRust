@@ -26,6 +26,13 @@ const SERVICES: &[(&str, &str)] = &[
     ("RetailDemo", "retail demo mode"),
     ("WerSvc", "Windows Error Reporting"),
     ("Fax", "Fax"),
+    ("DPS", "Diagnostic Policy Service (troubleshooters)"),
+    ("WdiServiceHost", "diagnostic service host (needs DPS)"),
+    ("WdiSystemHost", "diagnostic system host (needs DPS)"),
+    ("whesvc", "Windows Health and Optimized Experiences"),
+    ("TrkWks", "distributed link tracking"),
+    ("WSAIFabricSvc", "Windows AI Fabric (Copilot+/Recall features)"),
+    // PcaSvc, InventorySvc, lfsvc: rust-explorer's install already disables them with its own backup, not duplicated here
 ];
 
 // (key, value, DWORD data, what it does)

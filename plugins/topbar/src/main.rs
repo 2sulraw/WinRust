@@ -821,6 +821,19 @@ unsafe extern "system" fn collect(h: HWND, lp: LPARAM) -> i32 {
 }
 
 /// "%windir%\explorer.exe" -> "C:\Windows\explorer.exe" (unknown variables stay as they are).
+/// A Run-box command ("cmd", "%appdata%", "control") as a real path the shell can draw an icon for: environment
+/// variables expanded, a bare name looked up on PATH like Win+R does. Anything else comes back as it was.
+unsafe fn resolve_cmd(s: &str) -> String {
+    use windows_sys::Win32::Storage::FileSystem::SearchPathW;
+    let e = expand_env(s);
+    if e.contains(['\\', '/', ':']) {
+        return e;
+    }
+    let mut b = [0u16; 520];
+    let n = SearchPathW(null(), wide(&e).as_ptr(), wide(".exe").as_ptr(), b.len() as u32, b.as_mut_ptr(), null_mut()) as usize;
+    if n > 0 && n < b.len() { String::from_utf16_lossy(&b[..n]) } else { e }
+}
+
 fn expand_env(s: &str) -> String {
     let parts: Vec<&str> = s.split('%').collect();
     let mut out = String::new();
@@ -860,7 +873,7 @@ unsafe fn lnk_target(lnk: &[u16]) -> String {
 
 /// The target's own icon: SHGetFileInfo on the .lnk adds the shortcut arrow, so that is only the fallback.
 unsafe fn lnk_icon(lnk: &[u16], target: &str) -> HICON {
-    let ic = item_icon(&wstr_of(lnk), icon_px());
+    let ic = item_icon(&resolve_cmd(&wstr_of(lnk)), icon_px());
     if !ic.is_null() {
         return ic;
     }
@@ -1071,6 +1084,10 @@ unsafe fn taskband_links() -> Vec<((String, String), PathBuf)> {
     let starts: Vec<usize> = (0..blob.len().saturating_sub(HEAD.len())).filter(|&i| blob[i..i + HEAD.len()] == HEAD).collect();
     let dir = appdata_file("topbar-taskband");
     let _ = std::fs::create_dir_all(&dir);
+    // copies from an earlier run: a pin removed in Windows since must not linger
+    std::fs::read_dir(&dir).into_iter().flatten().flatten().filter(|e| e.path().extension().is_some_and(|x| x.eq_ignore_ascii_case("lnk"))).for_each(|e| {
+        let _ = std::fs::remove_file(e.path());
+    });
     let tmp = dir.join("tmp.lnk");
     let gone: Vec<String> = std::fs::read_to_string(unpinned_file()).unwrap_or_default().lines().map(str::to_string).collect();
     let mut out = vec![];
@@ -1081,6 +1098,15 @@ unsafe fn taskband_links() -> Vec<((String, String), PathBuf)> {
         }
         let key = pin_key(&wide(&tmp.to_string_lossy()));
         if key.0.is_empty() || gone.contains(&key_line(&key)) {
+            continue;
+        }
+        // most entries point at the pin's own .lnk in the TaskBar folder: that file is the pin (it only gives the order);
+        // one whose file is gone (File Explorer replaced by rust-explorer) is no pin at all
+        if key.0.ends_with(".lnk") {
+            let real = PathBuf::from(&key.0);
+            if real.is_file() {
+                out.push((pin_key(&wide(&real.to_string_lossy())), real));
+            }
             continue;
         }
         // a readable, stable file name: the exe's name (or the app id's) plus a hash of the whole key

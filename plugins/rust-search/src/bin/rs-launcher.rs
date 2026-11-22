@@ -1192,6 +1192,35 @@ unsafe fn draw_purge(dc: HDC, w: i32, v: &View, pv: &PView) {
 }
 
 
+/// A Run-box entry ("cmd", "%appdata%", "control") as a real path the shell has an icon for: %VARIABLES% expanded and a
+/// bare name looked up on PATH like Win+R does. Anything else comes back as it was.
+unsafe fn icon_path(p: &str) -> String {
+    use windows_sys::Win32::Storage::FileSystem::SearchPathW;
+    let mut e = String::new();
+    let mut rest = p;
+    while let Some(a) = rest.find('%') {
+        e.push_str(&rest[..a]);
+        let after = &rest[a + 1..];
+        match after.find('%').and_then(|b| std::env::var(&after[..b]).ok().map(|v| (b, v))) {
+            Some((b, v)) => {
+                e.push_str(&v);
+                rest = &after[b + 1..];
+            }
+            None => {
+                e.push('%');
+                rest = after;
+            }
+        }
+    }
+    e.push_str(rest);
+    if e.contains(['\\', '/', ':']) {
+        return e;
+    }
+    let mut b = [0u16; 520];
+    let n = SearchPathW(null(), wide(&e).as_ptr(), wide(".exe").as_ptr(), b.len() as u32, b.as_mut_ptr(), null_mut()) as usize;
+    if n > 0 && n < b.len() { String::from_utf16_lossy(&b[..n]) } else { e }
+}
+
 unsafe fn ensure_icons() {
     st(|s| {
         if s.icons.len() > 300 {
@@ -1205,7 +1234,7 @@ unsafe fn ensure_icons() {
     let need: Vec<String> = st(|s| s.results.iter().skip(s.top).take(MAX_ROWS).filter(|p| !s.icons.contains_key(*p)).cloned().collect());
     for p in need {
         let mut fi: SHFILEINFOW = zeroed();
-        let path = wide(&p);
+        let path = wide(&icon_path(&p));
         SHGetFileInfoW(path.as_ptr(), 0, &mut fi, size_of::<SHFILEINFOW>() as u32, SHGFI_ICON | SHGFI_LARGEICON);
         if fi.hIcon.is_null() {
             // no icon of its own (unregistered type, vanished file): the generic one for that extension

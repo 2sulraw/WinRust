@@ -45,7 +45,7 @@ On uninstall, `rust-explorer` restores the service startup values and the svchos
 | **wiztree** | A disk-usage map ("WinRust Disk" in Start) | Nothing, apart from the file and a shortcut |
 | **photoview** | A fast photo viewer | Adds it to "Open with" (it does not become the default) |
 | **rust-settings** | Settings in Rust: display (resolution, refresh rate), sound (volume), power plan and drive space, per-app volume and device choice, night light, display arrangement by dragging, network adapters, Wi-Fi on every adapter (password or 802.1X), VPN and proxy, Bluetooth, apps, Windows Update, disk cleanup, theme, about | Nothing, apart from the file and a shortcut. Win+I and the bar menus open this window instead of Windows Settings (only a few rare pages still open the system ones) |
-| **debloat** | Off: telemetry, Copilot, Recall, Start ads, Edge in the background | Services and registry policies; old values are saved and restored on uninstall. **Command line only:** `install debloat --yes` |
+| **debloat** | Off: telemetry, diagnostics, Copilot, Recall, Start ads, Edge in the background | Services and registry policies; old values are saved and restored on uninstall. **Command line only:** `install debloat --yes` |
 | **purge** | Removes the bundled junk like Tiny11 does: Clipchamp, News, Weather, Xbox overlays, Teams, Cortana, Widgets, Skype and more, plus telemetry tasks | **IRREVERSIBLE, no undo.** Apps are removed for all users and from the image; the Store, Settings, Start and runtimes stay. Run `purge.exe` first: it only lists. **Command line only:** `install purge --yes` (OneDrive and Edge: `purge.exe --apply --onedrive --edge`) |
 | chrome-rs | A browser | Not installable yet |
 

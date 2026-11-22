@@ -1839,8 +1839,21 @@ fn namespace_target() -> Option<String> {
 fn main() {
     if let Some(t) = namespace_target() {
         // control.exe opens its own window; explorer.exe given a namespace address opens it directly (no folder verb involved)
-        let panel = t.to_uppercase().contains("26EE0668-A00A-44D7-9371-BEB064C98683");
-        let _ = std::process::Command::new(if panel { "control.exe" } else { "explorer.exe" }).args(if panel { vec![] } else { vec![t] }).spawn();
+        // Only the "open" verb of folders is ours: control.exe and explorer.exe <address> both come back here through it
+        // (an endless control.exe <-> rust-explorer loop, flickering cursor). The "explore" verb still has Explorer's own
+        // handler, so it shows the panel / Recycle Bin in a real Explorer window. The hop mark stops any loop that remains.
+        if env::var_os("RX_NS_HOP").is_none() {
+            let addr = if t.starts_with("::") { format!("shell:{t}") } else { t };
+            unsafe { env::set_var("RX_NS_HOP", "1") }; // inherited by whatever the shell starts from here
+            let (f, v) = (w(&addr), w("explore"));
+            let mut sei: SHELLEXECUTEINFOW = unsafe { std::mem::zeroed() };
+            sei.cbSize = size_of::<SHELLEXECUTEINFOW>() as u32;
+            sei.fMask = 0x0000_0100 | 0x0000_0400; // SEE_MASK_NOASYNC (we exit right after) | SEE_MASK_FLAG_NO_UI
+            sei.lpVerb = v.as_ptr();
+            sei.lpFile = f.as_ptr();
+            sei.nShow = SW_SHOWNORMAL;
+            unsafe { ShellExecuteExW(&mut sei) };
+        }
         return;
     }
     sh::init();

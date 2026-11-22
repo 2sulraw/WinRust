@@ -43,11 +43,11 @@ use windows_sys::Win32::{
     UI::{Input::KeyboardAndMouse::*, WindowsAndMessaging::*},
 };
 
-const BG: u32 = rgb(22, 22, 24); // the shared WinRust graphite (common/src/style.rs, normal style)
-const PANEL: u32 = rgb(34, 34, 38);
-const BORDER: u32 = rgb(50, 50, 55);
+const BG: u32 = rgb(28, 28, 30); // the macOS dark window and grouped-list colours
+const PANEL: u32 = rgb(44, 44, 46);
+const BORDER: u32 = rgb(56, 56, 58);
 const TEXT: u32 = rgb(245, 245, 247);
-const DIM: u32 = rgb(142, 142, 147);
+const DIM: u32 = rgb(152, 152, 157);
 const ACCENT: u32 = rgb(10, 132, 255);
 const GOOD: u32 = winrust_common::style::GOOD;
 const BAD: u32 = winrust_common::style::BAD;
@@ -151,12 +151,12 @@ const PLUGINS: &[Plugin] = &[
     Plugin {
         name: "debloat",
         desc: Tr("Отключает мусор Windows: телеметрию, Copilot, Recall, рекламу в Пуске, фон Edge. Только обратимое, старые значения запоминаются.", "Disables Windows junk: telemetry, Copilot, Recall, Start menu ads, the Edge background. Reversible changes only, old values are remembered."),
-        warn: Tr("Будут ОТКЛЮЧЕНЫ несколько служб (телеметрия, карты, отчёты об ошибках) и выставлены политики реестра (Copilot, Recall, реклама, фон Edge; Edge покажет «управляется организацией»). Старые значения сохраняются, uninstall debloat возвращает всё. Приложения не удаляются.", "Several services will be DISABLED (telemetry, maps, error reporting) and registry policies set (Copilot, Recall, ads, Edge background; Edge will show 'managed by your organization'). Old values are saved, uninstall debloat restores everything. No apps are removed."),
+        warn: Tr("Будут ОТКЛЮЧЕНЫ несколько служб (телеметрия, карты, отчёты об ошибках, диагностика и средства устранения неполадок, AI Fabric) и выставлены политики реестра (Copilot, Recall, реклама, фон Edge; Edge покажет «управляется организацией»). Старые значения сохраняются, uninstall debloat возвращает всё. Приложения не удаляются.", "Several services will be DISABLED (telemetry, maps, error reporting, diagnostics and troubleshooters, AI Fabric) and registry policies set (Copilot, Recall, ads, Edge background; Edge will show 'managed by your organization'). Old values are saved, uninstall debloat restores everything. No apps are removed."),
         installed: || db_dir().join("debloat.exe").is_file(),
         actions: Some((db_install, db_uninstall)),
         settings: false,
         bulk: false, // changes system behaviour: only on request, never as part of "install everything"
-        glyph: "\u{E74D}", // delete
+        glyph: "\u{EA18}", // shield
     },
     Plugin {
         name: "purge",
@@ -193,6 +193,9 @@ fn main() {
     refresh();
     for i in ready() {
         SELECTED[i].store(selected_by_default(PLUGINS[i].name, INSTALLED[i].load(Relaxed)), Relaxed);
+    }
+    for i in extras() {
+        SELECTED[i].store(INSTALLED[i].load(Relaxed), Relaxed); // an applied extra shows as on; a new one is never pre-ticked
     }
     unsafe {
         let (mut token, mut input): (usize, GdiplusStartupInput) = (0, zeroed());
