@@ -3,7 +3,7 @@
 # Rebuilds everything (build-all.ps1), pushes pending changes, tags, uploads the exe.
 # For the auto-updater (src/update) it also uploads every plugin exe plus manifest.txt and manifest.sig, signed with the
 # private key in %USERPROFILE%\.winrust\update-signing.key (tools/winrust-sign). Without that key the release stops.
-param([Parameter(Mandatory)][string]$Version, [string]$Notes)
+param([Parameter(Mandatory)][string]$Version, [string]$Notes, [switch]$OnlyInstaller)
 $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot
 Set-Location $root
@@ -32,6 +32,7 @@ $manifest = Join-Path $dir 'manifest.txt'
 & "$root\target\release\winrust-sign.exe" sign $manifest (Join-Path $dir 'manifest.sig')
 if ($LASTEXITCODE) { throw 'signing failed: is the key in %USERPROFILE%\.winrust\update-signing.key?' }
 $assets = @(Get-ChildItem $dir | ForEach-Object FullName)
+if ($OnlyInstaller) { $assets = @($exe) }
 & "$PSScriptRoot\publish.ps1" -Message "Release $Version"
 git tag $Version
 git push origin $Version
