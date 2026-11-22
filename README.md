@@ -4,7 +4,7 @@
 
 **A Windows shell written in Rust: faster and lighter than the stock one.** Small native programs (no .NET, no Electron) that replace parts of Windows: the taskbar, File Explorer, file search, Task Manager, plus a disk cleaner, a disk map and a photo viewer. One installer puts them in, one button takes them all out.
 
-English | [Русский](README.ru.md)
+English | [Русский](README.ru.md) | [日本語](README.ja.md) | [Português (Brasil)](README.pt-BR.md)
 
 <p align="center"><img src="assets/th.jpg" alt="WinRust" width="480"></p>
 
@@ -24,7 +24,7 @@ If UAC asks for **another administrator's** password, the per-user settings (sta
 
 **Manual update:** download the new `WinRust.exe` from the releases page, run it as administrator and select the components you want to update or install. An existing `rust-explorer` stays selected by default for updates. Your settings and the saved original Windows values stay.
 
-The installer is in English. The **Русский** button in its corner (or "WinRust apps in Русский" in the bar's right-click menu) switches every WinRust program to Russian.
+The installer is in English. The language button in its corner (or "WinRust apps: …" in the bar's right-click menu) switches every WinRust program to the next language: English → Русский → 日本語 → Português (Brasil) → English. The choice is stored in `%ProgramData%\WinRust\lang.txt` (`en`, `ru`, `ja`, `pt`).
 
 ## Remove
 
@@ -114,7 +114,7 @@ src/            the installer (plugin-launcher.exe)
   main.rs         the plugin table PLUGINS: name, texts, install/uninstall pair, icon
   install/        what each plugin changes and how it is undone (one file per plugin)
   cli.rs, ui.rs   the command line and the window; both call the same install functions
-common/         winrust-common: language switch (t!/tf!), UI styles and palettes, reg.exe output parser, NTFS MFT reader
+common/         winrust-common: language switch (t!/tf!: English, Russian, Japanese, Brazilian Portuguese), UI styles and palettes, reg.exe output parser, NTFS MFT reader
 plugins/        sources of every plugin, each its own crate
 ReShell/        reshell (desktop hotkeys, topbar safety net), ships with topbar
 payload.txt     the exes embedded into the installer, and where the build puts them

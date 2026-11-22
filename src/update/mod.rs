@@ -13,7 +13,7 @@ use swap::swap_all;
 
 /// The owner's ed25519 public key (`winrust-sign keygen`). The private half never enters the repository.
 const KEY: &str = include_str!("../../update-key.pub");
-const BASE: &str = "https://github.com/Lemxy/WinRust/releases";
+pub(crate) const BASE: &str = "https://github.com/Lemxy/WinRust/releases";
 const TASK: &str = "WinRust-update";
 
 fn home() -> PathBuf {
@@ -71,8 +71,39 @@ pub(crate) fn autoupdate() -> Result<String, String> {
     let _ = fs::remove_dir_all(&work);
     match &r {
         Ok(m) => log(&format!("autoupdate: {m}")),
-        Err(e) => log(&tf!("autoupdate: ОШИБКА {e}", "autoupdate: ERROR {e}")),
+        Err(e) => log(&tf!("autoupdate: ОШИБКА {e}", "autoupdate: ERROR {e}", ja: "自動更新: エラー {e}", pt: "autoupdate: ERRO {e}")),
     }
+    r
+}
+
+/// A newer signed release than this one, found by the installer window (None until found, or when up to date).
+pub(crate) static NEWER: Mutex<Option<String>> = Mutex::new(None);
+
+/// This build's version, or the installed one when the auto-updater has put a newer one in (`v0.5.0`).
+pub(crate) fn current() -> &'static str {
+    static V: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    V.get_or_init(|| {
+        let own = format!("v{}", env!("CARGO_PKG_VERSION"));
+        match fs::read_to_string(home().join("version.txt")).map(|s| s.trim().to_string()) {
+            Ok(inst) if ver(&inst) > ver(&own) => inst,
+            _ => own,
+        }
+    })
+}
+
+/// Asks GitHub for the latest signed manifest (only to compare versions, nothing is installed); remembers a newer one in `NEWER`.
+pub(crate) fn look_for_update() -> Option<String> {
+    let work = env::temp_dir().join(format!("winrust-vercheck-{}", std::process::id()));
+    fs::create_dir_all(&work).ok()?;
+    let r = (|| {
+        let (mt, ms) = (work.join("manifest.txt"), work.join("manifest.sig"));
+        fetch(&format!("{BASE}/latest/download/manifest.txt"), &mt).ok()?;
+        fetch(&format!("{BASE}/latest/download/manifest.sig"), &ms).ok()?;
+        let m = verify(&fs::read(&mt).ok()?, &fs::read_to_string(&ms).ok()?, KEY).ok()?;
+        (ver(&m.version)? > ver(current())?).then_some(m.version)
+    })();
+    let _ = fs::remove_dir_all(&work);
+    *NEWER.lock().unwrap() = r.clone();
     r
 }
 
@@ -89,10 +120,10 @@ fn check(work: &Path) -> Result<String, String> {
     let vfile = home().join("version.txt");
     if let Some(cur) = fs::read_to_string(&vfile).ok().and_then(|s| ver(s.trim())) {
         if new_v < cur {
-            return Err(tf!("{}: релиз старше установленного, отказ", "{}: older than the installed release, refused", m.version));
+            return Err(tf!("{}: релиз старше установленного, отказ", "{}: older than the installed release, refused", ja: "{}: インストール済みのリリースより古いため拒否しました", pt: "{}: mais antiga que a versão instalada, recusada", m.version));
         }
         if new_v == cur {
-            return Ok(tf!("{}: всё актуально", "{}: up to date", m.version));
+            return Ok(tf!("{}: всё актуально", "{}: up to date", ja: "{}: 最新です", pt: "{}: atualizado", m.version));
         }
     }
     let (mut done, mut errs) = (vec![], vec![]);
@@ -105,14 +136,14 @@ fn check(work: &Path) -> Result<String, String> {
         // GitHub turns spaces in asset names into dots
         let got = fetch(&format!("{BASE}/download/{}/{}", m.version, name.replace(' ', ".")), &tmp).and_then(|_| {
             let b = fs::read(&tmp).map_err(|e| e.to_string())?;
-            if sha256_hex(&b) == *sha { Ok(()) } else { Err(tf!("{name}: хеш не совпадает с манифестом", "{name}: hash does not match the manifest")) }
+            if sha256_hex(&b) == *sha { Ok(()) } else { Err(tf!("{name}: хеш не совпадает с манифестом", "{name}: hash does not match the manifest", ja: "{name}: ハッシュがマニフェストと一致しません", pt: "{name}: o hash não corresponde ao manifesto")) }
         });
         match got.and_then(|_| swap_all(&tmp, &stale)) {
             Ok(()) => done.push(name.as_str()),
             Err(e) => errs.push(e),
         }
     }
-    let msg = if done.is_empty() { tf!("{}: всё актуально", "{}: up to date", m.version) } else { tf!("{}: обновлено {}", "{}: updated {}", m.version, done.join(", ")) };
+    let msg = if done.is_empty() { tf!("{}: всё актуально", "{}: up to date", ja: "{}: 最新です", pt: "{}: atualizado", m.version) } else { tf!("{}: обновлено {}", "{}: updated {}", ja: "{}: {} を更新しました", pt: "{}: atualizado {}", m.version, done.join(", ")) };
     if errs.is_empty() {
         let _ = fs::write(&vfile, &m.version); // failed files are retried: the version is recorded only when all went through
         Ok(msg)
@@ -122,7 +153,7 @@ fn check(work: &Path) -> Result<String, String> {
 /// After install / uninstall: the task and the installer copy exist exactly while at least one plugin is installed.
 pub(crate) fn updater_sync() {
     if PLUGINS.iter().any(|p| (p.installed)()) {
-        soft(t!("автообновление не включено", "automatic updates were not enabled"), enable());
+        soft(t!("автообновление не включено", "automatic updates were not enabled", ja: "自動更新は有効になりませんでした", pt: "as atualizações automáticas não foram ativadas"), enable());
     } else {
         let _ = run("schtasks", &["/delete", "/tn", TASK, "/f"]);
         let _ = fs::remove_dir_all(home()); // fails harmlessly if this very copy is running
