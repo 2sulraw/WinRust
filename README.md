@@ -20,7 +20,9 @@ Windows Search is optional: on a stripped Windows (for example a debloated LTSC 
 
 If UAC asks for **another administrator's** password, the per-user settings (startup entries, scheduled tasks, PowerShell profile, search permissions) still go to the user who is signed in, not to the administrator you typed. If the installer cannot tell who that is, it stops before changing anything.
 
-**Update:** download the new `WinRust.exe` from the releases page, run it as administrator and select the components you want to update or install. An existing `rust-explorer` stays selected by default for updates. Your settings and the saved original Windows values stay.
+**Automatic updates:** after the first install, a `WinRust-update` scheduled task (runs as SYSTEM, no UAC prompt) checks the latest release at boot and once a day. It downloads only the programs that changed, checks each file against a manifest signed with the project's key (a tampered or unsigned release is refused) and replaces only files that are already installed. A running program switches to the new version the next time it starts (sign-in or reboot). Log: `%ProgramData%\plugin-launcher\install.log` (`autoupdate:` lines). To turn it off, disable the `WinRust-update` task in Task Scheduler; **Remove all** deletes it.
+
+**Manual update:** download the new `WinRust.exe` from the releases page, run it as administrator and select the components you want to update or install. An existing `rust-explorer` stays selected by default for updates. Your settings and the saved original Windows values stay.
 
 The installer is in English. The **Русский** button in its corner (or "WinRust apps in Русский" in the bar's right-click menu) switches every WinRust program to Russian.
 
@@ -145,6 +147,7 @@ plugin-launcher install <plugin>... --yes (one or more names, or `all` for the d
 plugin-launcher update <plugin>          (reinstall from payload\ next to the exe)
 plugin-launcher uninstall <plugin>
 plugin-launcher rollback --yes           (remove everything)
+plugin-launcher autoupdate               (one update check now: what the WinRust-update task runs)
 ```
 
 To include `rust-explorer` in a fresh bulk install, run `plugin-launcher install all rust-explorer --yes`. If `topbar` is already installed, you can install `rust-explorer` on its own.

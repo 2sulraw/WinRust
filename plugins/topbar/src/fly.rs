@@ -337,10 +337,13 @@ fn filtered() -> Vec<usize> {
     let q = QUERY.with_borrow(|q| q.to_lowercase());
     let mut apps = APPS.lock().unwrap();
     if q.is_empty() {
+        let pinned = PINNED.lock().unwrap();
+        // nothing pinned yet: every app, A to Z, like Windows' "All apps" (an empty Start read as "no apps found", #72)
+        if pinned.is_empty() {
+            return (0..apps.len()).collect();
+        }
         // nothing typed: only what the user pinned (an app that is not a Start menu shortcut joins the list on demand)
-        return PINNED
-            .lock()
-            .unwrap()
+        return pinned
             .iter()
             .map(|p| {
                 let w = wide(p);

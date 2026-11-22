@@ -7,6 +7,7 @@ use crate::*;
 //   plugin-launcher install <plugin>... --yes   (several names, or `all` for the defaults; without --yes it only prints warnings)
 //   plugin-launcher uninstall <plugin>
 //   plugin-launcher rollback --yes
+//   plugin-launcher autoupdate               (what the WinRust-update task runs as SYSTEM: src/update)
 // Exit code 0 = done, 1 = failed, 2 = bad arguments or --yes missing. Run it from an elevated terminal: the manifest
 // demands admin, and from a normal one Windows opens a separate elevated console whose output is lost.
 
@@ -81,6 +82,7 @@ pub(crate) fn cli(args: &[String]) -> i32 {
             Some(i) if !(PLUGINS[i].installed)() => return { say(&format!("{n} is not installed")); 0 },
             Some(i) => uninstall_plugin(i),
         },
+        ["autoupdate"] => autoupdate(),
         ["rollback"] if yes => rollback(),
         ["rollback"] => return { say("Removes every installed plugin. Repeat with --yes."); 2 },
         _ => return { say(usage); 2 },

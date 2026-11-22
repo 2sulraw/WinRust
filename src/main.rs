@@ -12,7 +12,8 @@ mod cli;
 mod install;
 mod selection;
 mod ui;
-use {cli::*, install::*, selection::*, ui::*};
+mod update;
+use {cli::*, install::*, selection::*, ui::*, update::*};
 use std::{
     cell::Cell,
     env, fs,

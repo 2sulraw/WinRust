@@ -66,6 +66,6 @@ powershell -ExecutionPolicy Bypass -File scripts\update-plugin.ps1 <rust-search|
 - Оговорку про неподписанный exe и SmartScreen не убирать, пока нет подписи.
 - Описание, темы и главная страница репозитория (`gh repo edit`) только по просьбе владельца.
 
-**Релиз.** `scripts\release.ps1 v0.2.0 [-Notes "..."]`: `build-all.ps1`, пуш, тег, GitHub Release с `WinRust.exe`. Только когда владелец просит. Перед релизом проверить, что README и ROADMAP не устарели.
+**Релиз.** `scripts\release.ps1 v0.2.0 [-Notes "..."]`: `build-all.ps1`, пуш, тег, GitHub Release с `WinRust.exe`, всеми exe плагинов и подписанными `manifest.txt`/`manifest.sig` для автообновления (`src/update/`). Подписывает `tools/winrust-sign` ключом `%USERPROFILE%\.winrust\update-signing.key`: без ключа релиз не выйдет. Ключ никогда не коммитить и не пересоздавать: установленные копии доверяют только `update-key.pub` из корня. Только когда владелец просит. Перед релизом проверить, что README и ROADMAP не устарели.
 
 **Если пуш не прошёл:** показать ошибку владельцу, не чинить принудительным пушем. Если в `gh auth status` активен не `Lemxy`: `gh auth switch -u Lemxy`.
