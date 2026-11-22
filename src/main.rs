@@ -43,11 +43,11 @@ use windows_sys::Win32::{
     UI::{Input::KeyboardAndMouse::*, WindowsAndMessaging::*},
 };
 
-const BG: u32 = rgb(28, 28, 30); // the macOS dark window and grouped-list colours
-const PANEL: u32 = rgb(44, 44, 46);
-const BORDER: u32 = rgb(56, 56, 58);
+const BG: u32 = rgb(22, 22, 24); // the shared WinRust graphite (common/src/style.rs, normal style)
+const PANEL: u32 = rgb(34, 34, 38);
+const BORDER: u32 = rgb(50, 50, 55);
 const TEXT: u32 = rgb(245, 245, 247);
-const DIM: u32 = rgb(152, 152, 157);
+const DIM: u32 = rgb(142, 142, 147);
 const ACCENT: u32 = rgb(10, 132, 255);
 const GOOD: u32 = winrust_common::style::GOOD;
 const BAD: u32 = winrust_common::style::BAD;
@@ -156,7 +156,7 @@ const PLUGINS: &[Plugin] = &[
         actions: Some((db_install, db_uninstall)),
         settings: false,
         bulk: false, // changes system behaviour: only on request, never as part of "install everything"
-        glyph: "\u{EA18}", // shield
+        glyph: "\u{E74D}", // delete
     },
     Plugin {
         name: "purge",
@@ -193,9 +193,6 @@ fn main() {
     refresh();
     for i in ready() {
         SELECTED[i].store(selected_by_default(PLUGINS[i].name, INSTALLED[i].load(Relaxed)), Relaxed);
-    }
-    for i in extras() {
-        SELECTED[i].store(INSTALLED[i].load(Relaxed), Relaxed); // an applied extra shows as on; a new one is never pre-ticked
     }
     unsafe {
         let (mut token, mut input): (usize, GdiplusStartupInput) = (0, zeroed());
