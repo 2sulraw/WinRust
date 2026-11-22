@@ -24,7 +24,7 @@ If UAC asks for **another administrator's** password, the per-user settings (sta
 
 **Manual update:** download the new `WinRust.exe` from the releases page, run it as administrator and select the components you want to update or install. An existing `rust-explorer` stays selected by default for updates. Your settings and the saved original Windows values stay.
 
-The installer is in English. The language button in its corner (or "WinRust apps: …" in the bar's right-click menu) switches every WinRust program to the next language: English → Русский → 日本語 → Português (Brasil) → English. The choice is stored in `%ProgramData%\WinRust\lang.txt` (`en`, `ru`, `ja`, `pt`).
+The installer is in English. The language button in its corner (or the gear on the bar → **Bar settings → Language**) switches every WinRust program to the chosen language: English, Русский, 日本語 or Português (Brasil). The choice is stored in `%ProgramData%\WinRust\lang.txt` (`en`, `ru`, `ja`, `pt`).
 
 ## Remove
 
@@ -144,7 +144,7 @@ From a terminal **with administrator rights**:
 ```
 plugin-launcher list
 plugin-launcher install <plugin>... --yes (one or more names, or `all` for the default components; without --yes it only prints warnings)
-plugin-launcher update <plugin>          (reinstall from payload\ next to the exe)
+plugin-launcher update <plugin>|all        (reinstall from payload\ next to the exe)
 plugin-launcher uninstall <plugin>
 plugin-launcher rollback --yes           (remove everything)
 plugin-launcher autoupdate               (one update check now: what the WinRust-update task runs)

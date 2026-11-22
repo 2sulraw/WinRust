@@ -24,7 +24,7 @@ UAC が**別の管理者**のパスワードを求めた場合でも、ユーザ
 
 **手動更新:** リリース ページから新しい `WinRust.exe` をダウンロードし、管理者として実行して、更新またはインストールするコンポーネントを選びます。既存の `rust-explorer` は、更新時には既定で選択されたままになります。設定と、保存された Windows の元の値は保持されます。
 
-インストーラーは英語で表示されます。右上の **日本語** ボタン (または、バーの右クリック メニューの「WinRust アプリ: 日本語」) を押すと、すべての WinRust プログラムの表示が次の言語 (英語 → Русский → 日本語 → Português → 英語…) に切り替わります。選択内容は `%ProgramData%\WinRust\lang.txt` (`en`、`ru`、`ja`、`pt`) に保存されます。
+インストーラーは英語で表示されます。右上の言語ボタン (またはバーの歯車 → **バーの設定 → 言語**) で、すべての WinRust プログラムの表示を選んだ言語 (English、Русский、日本語、Português (Brasil)) に切り替えられます。選択内容は `%ProgramData%\WinRust\lang.txt` (`en`、`ru`、`ja`、`pt`) に保存されます。
 
 ## 削除
 
@@ -147,7 +147,7 @@ powershell -ExecutionPolicy Bypass -File scripts\build-all.ps1
 ```
 plugin-launcher list
 plugin-launcher install <plugin>... --yes (1 つ以上の名前、または既定のコンポーネントすべてを表す `all`。--yes なしでは警告を表示するだけ)
-plugin-launcher update <plugin>          (exe の隣の payload\ から再インストール)
+plugin-launcher update <plugin>|all        (exe の隣の payload\ から再インストール)
 plugin-launcher uninstall <plugin>
 plugin-launcher rollback --yes           (すべて削除)
 plugin-launcher autoupdate               (今すぐ 1 回の更新確認: WinRust-update タスクが実行するもの)

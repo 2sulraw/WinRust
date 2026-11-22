@@ -9,6 +9,7 @@ pub(crate) unsafe fn style_menu() {
         fly::MItem::new(t!("Тема", "Theme", ja: "テーマ", pt: "Tema")).hint(style_name(style())).swatch(i18n::style::pal().accent),
         fly::MItem::new(t!("Цвета и прозрачность", "Colors and transparency", ja: "色と透明度", pt: "Cores e transparência")).hint("›"),
         fly::MItem::new(t!("Шаблоны", "Templates", ja: "テンプレート", pt: "Modelos")).hint("›"),
+        fly::MItem::new(t!("Язык", "Language", ja: "言語", pt: "Idioma")).hint(i18n::lang().name()),
         fly::MItem::head(t!("Панель", "Bar", ja: "バー", pt: "Barra")).sep(),
         fly::MItem::new(t!("Положение, размер, поведение", "Position, size, behavior", ja: "位置、サイズ、動作", pt: "Posição, tamanho, comportamento")).hint("›"),
         fly::MItem::new(t!("Разложить окна плиткой", "Tile the windows", ja: "ウィンドウを並べて表示", pt: "Lado a lado")),
@@ -18,9 +19,10 @@ pub(crate) unsafe fn style_menu() {
         1 => theme_page(),
         2 => colors_page(),
         3 => templates_page(),
-        5 => bar_page(),
-        6 => tile_windows(),
-        7 => reset_page(),
+        4 => language_page(),
+        6 => bar_page(),
+        7 => tile_windows(),
+        8 => reset_page(),
         _ => {}
     });
 }
@@ -56,6 +58,22 @@ pub(crate) unsafe fn relook(moved: bool) {
     }
     apply_opacity(bar);
     InvalidateRect(bar, null(), 0);
+}
+
+/// The language of every WinRust program (written to lang.txt; the others pick it up when they start).
+pub(crate) unsafe fn language_page() {
+    use i18n::Lang::*;
+    let mut items = vec![back()];
+    for (k, l) in [En, Ru, Ja, Pt].into_iter().enumerate() {
+        let it = fly::MItem::new(l.name()).on(l == i18n::lang());
+        items.push(if k == 0 { it.sep() } else { it });
+    }
+    gear_page("\u{E774}", t!("Язык", "Language", ja: "言語", pt: "Idioma"), t!("Язык всех программ WinRust", "The language of every WinRust program", ja: "すべての WinRust プログラムの言語", pt: "O idioma de todos os programas da WinRust"), items, move |i| {
+        let Some(&l) = i.checked_sub(1).and_then(|k| [En, Ru, Ja, Pt].get(k)) else { return style_menu() };
+        i18n::set_lang(l);
+        InvalidateRect(BAR.load(Relaxed) as HWND, null(), 0);
+        language_page();
+    });
 }
 
 pub(crate) unsafe fn theme_page() {

@@ -24,7 +24,7 @@ Se o UAC pedir a senha de **outro administrador**, as configurações por usuár
 
 **Atualização manual:** baixe o novo `WinRust.exe` na página de versões, execute-o como administrador e selecione os componentes que quer atualizar ou instalar. Um `rust-explorer` existente continua selecionado por padrão nas atualizações. Suas configurações e os valores originais do Windows salvos permanecem.
 
-O instalador abre em inglês. O botão **Português** no canto dele (ou "Apps da WinRust: Português" no menu de botão direito da barra) passa todos os programas WinRust para o próximo idioma (English → Русский → 日本語 → Português → English…). A escolha fica em `%ProgramData%\WinRust\lang.txt` (`en`, `ru`, `ja`, `pt`).
+O instalador abre em inglês. O botão de idioma no canto dele (ou a engrenagem da barra → **Configurações da barra → Idioma**) troca todos os programas WinRust para o idioma escolhido: English, Русский, 日本語 ou Português (Brasil). A escolha fica em `%ProgramData%\WinRust\lang.txt` (`en`, `ru`, `ja`, `pt`).
 
 ## Remoção
 
@@ -147,7 +147,7 @@ De um terminal **com direitos de administrador**:
 ```
 plugin-launcher list
 plugin-launcher install <plugin>... --yes (um ou mais nomes, ou `all` para os componentes padrão; sem --yes só mostra avisos)
-plugin-launcher update <plugin>          (reinstala a partir de payload\ ao lado do exe)
+plugin-launcher update <plugin>|all        (reinstala a partir de payload\ ao lado do exe)
 plugin-launcher uninstall <plugin>
 plugin-launcher rollback --yes           (remove tudo)
 plugin-launcher autoupdate               (uma verificação de atualização agora: o que a tarefa WinRust-update executa)

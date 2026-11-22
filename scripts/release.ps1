@@ -8,6 +8,10 @@ $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot
 Set-Location $root
 if ($Version -notmatch '^v\d+\.\d+\.\d+$') { throw 'version must look like v0.2.0' }
+# the installer shows its own version (CARGO_PKG_VERSION) and compares it with the latest release
+$toml = Get-Content "$root\Cargo.toml" -Raw
+$toml = [regex]::Replace($toml, '(?m)^version = "[^"]*"', "version = `"$($Version.TrimStart('v'))`"", 1)
+[IO.File]::WriteAllText("$root\Cargo.toml", $toml)
 & "$PSScriptRoot\build-all.ps1"
 cargo build --release -p winrust-sign; if ($LASTEXITCODE) { throw 'winrust-sign build failed' }
 # signed before anything is pushed or tagged: a missing key must not leave a half-made release
