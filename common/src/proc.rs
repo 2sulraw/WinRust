@@ -39,6 +39,22 @@ pub fn list() -> Vec<(u32, String)> {
     v
 }
 
+/// Exe file name of one process (`SearchHost.exe`), without a snapshot of all of them. None when it cannot be opened.
+pub fn exe_name(pid: u32) -> Option<String> {
+    use windows_sys::Win32::System::Threading::{PROCESS_QUERY_LIMITED_INFORMATION, QueryFullProcessImageNameW};
+    unsafe {
+        let h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
+        if h.is_null() {
+            return None;
+        }
+        let (mut b, mut n) = ([0u16; 520], 520u32);
+        let ok = QueryFullProcessImageNameW(h, 0, b.as_mut_ptr(), &mut n) != 0;
+        CloseHandle(h);
+        let path = String::from_utf16_lossy(&b[..n as usize]);
+        ok.then(|| path.rsplit('\\').next().unwrap_or("").to_string())
+    }
+}
+
 /// Pids of the processes with this exe name (case-insensitive, e.g. `explorer.exe`).
 pub fn pids(name: &str) -> Vec<u32> {
     list().into_iter().filter(|(_, n)| n.eq_ignore_ascii_case(name)).map(|p| p.0).collect()
@@ -155,5 +171,8 @@ mod tests {
         let me = std::process::id();
         assert!(super::list().iter().any(|(p, _)| *p == me));
         assert!(super::cmdline(me).is_some_and(|c| !c.is_empty()));
+        let name = super::exe_name(me).unwrap();
+        assert!(name.to_lowercase().ends_with(".exe") && !name.contains('\\'), "{name}");
+        assert!(super::list().iter().any(|(p, n)| *p == me && n.eq_ignore_ascii_case(&name)));
     }
 }

@@ -6,6 +6,12 @@ Each item says how far it was checked: **tests** (unit tests), **built** (compil
 
 ## Done
 
+### v0.5.7
+- **Lighter in the background:** topbar follows window events (WinEvent hooks) instead of listing every window twice a second, caches each window's app ID and icon, draws its background and fonts once instead of every frame; the 250 ms pointer watch runs only for auto-hide / dock / desktop. Idle CPU 6.3 → 0.5 ms/s. rs-launcher ends SearchHost on a window event instead of a full process refresh every 2 s (6.3 ms/s → 0, 800 → 110 handles, 12.7 → 1.4 MB private). rs-shell: no reg.exe, no snapshots (2.1 ms/s → 0). Task Manager in the tray looks every 5 s. Search index slots 12 → 10 bytes. *measured: README, Background load*
+- **Setup wizard:** the installer is a dark step-by-step wizard: Express (the recommended set, nothing removed) or Custom (check boxes, the old warnings), a progress page, a results page. *built; pages screenshot-checked except the progress page*
+- Settings pages open again with Explorer replaced (a marker keeps rs-shell from raising the desktop under the lent Explorer; a stale frame host is restarted); Win+R is always our Run box; Win+X opens our menu from the keyboard; Start search asks the search service's pipe directly. *built, installed; the keys not pressed by hand*
+- Community: Simplified Chinese (#104), the Win key ignored (#119), sharper preview icons (#128), programs started with the user's token (#114).
+
 ### Installer
 - One `plugin-launcher.exe` with every plugin embedded (unpacked into Program Files, not %TEMP%), static CRT, dark Win32/GDI window. *ran*
 - "Install WinRust" installs what is missing in order (topbar before rust-explorer), updates when everything is there; "Remove all" removes in reverse order. *built*

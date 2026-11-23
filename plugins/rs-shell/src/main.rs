@@ -287,7 +287,7 @@ fn supervise() {
 /// Run key, so it can live in a folder the user owns (Windows stopped starting our own shell at logon).
 /// The rust-explorer plugin's "replace Explorer" switch (HKCU\Software\rs-shell\ReplaceExplorer = 1).
 fn replace_on() -> bool {
-    reg(&["query", r"HKCU\Software\rs-shell", "/v", "ReplaceExplorer"]).is_some_and(|o| o.contains("0x1"))
+    winrust_common::reg::get_dword(r"HKCU\Software\rs-shell", "ReplaceExplorer") == Some(1)
 }
 
 /// Ends the Explorer that runs as the shell (started without arguments). Folder windows (started with a path) and the COM
@@ -307,7 +307,8 @@ fn startup_run() -> bool {
     let mut sid = 0;
     unsafe { windows_sys::Win32::System::RemoteDesktop::ProcessIdToSessionId(std::process::id(), &mut sid) };
     let k = format!(r"HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer\SessionInfo\{sid}");
-    ["RunStuffHasBeenRun", "StartupHasBeenRun"].iter().all(|n| reg(&["query", &format!(r"{k}\{n}")]).is_some())
+    // read in place: this runs every 3 s during logon (it started two reg.exe processes each time)
+    ["RunStuffHasBeenRun", "StartupHasBeenRun"].iter().all(|n| winrust_common::reg::exists(&format!(r"{k}\{n}"), None))
 }
 
 /// What Explorer's autostart should leave running: the exe names (lowercase) of the entries we can recognise, and how many
@@ -394,8 +395,10 @@ fn overlay_watch(replace: bool, desktop: PathBuf, up: impl Fn() -> bool) {
         }
         // after we ended Explorer, a shell Explorer is back only because Settings needs it (common/src/settings.rs ends our
         // desktop for that and brings it back when Settings closes): a desktop raised under it leaves Store apps cloaked
-        let lent = replace && killed && !winrust_common::proc::shell_explorers().is_empty();
-        dmiss = if desktop.exists() && !up() && !lent { dmiss + 1 } else { 0 };
+        // asked only when the desktop is missing: a process snapshot plus a PEB read per explorer.exe every 3 s was for nothing
+        // the marker first: Settings sets it before it ends our desktop, so the gap until Explorer shows up is covered too
+        let lent = || winrust_common::settings::explorer_lent() || (replace && killed && !winrust_common::proc::shell_explorers().is_empty());
+        dmiss = if desktop.exists() && !up() && !lent() { dmiss + 1 } else { 0 };
         if dmiss >= 2 { log(&format!("desktop respawn -> {:?}", quiet(&desktop).arg("--desktop").spawn().map(|_| ()))); dmiss = 0; }
         if bar_up() { misses = 0; continue; }
         misses += 1;
