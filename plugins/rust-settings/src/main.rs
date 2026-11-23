@@ -106,6 +106,7 @@ enum Cmd {
     BtScan,
     Check,
     Install,
+    Wallpaper,
 }
 
 const CONFIRM_SECS: u32 = 15;
@@ -665,6 +666,8 @@ fn pages() -> Vec<Page> {
         Page {
             title: t!("Персонализация", "Personalization", ja: "個人用設定", pt: "Personalização").into(),
             rows: vec![
+                head(t!("Фон рабочего стола", "Desktop background", ja: "デスクトップの背景", pt: "Plano de fundo")),
+                Row::Item(t!("Выбрать картинку…", "Choose a picture…", ja: "画像を選択…", pt: "Escolher imagem…").into(), sys::wallpaper_name(), Cmd::Wallpaper),
                 head(t!("Оформление", "Appearance", ja: "外観", pt: "Aparência")),
                 toggle_row(t!("Тёмная тема для приложений", "Dark theme for apps", ja: "アプリのダーク テーマ", pt: "Tema escuro para apps"), PERSONALIZE, "AppsUseLightTheme", 0, 1),
                 toggle_row(t!("Тёмная тема для системы", "Dark theme for the system", ja: "システムのダーク テーマ", pt: "Tema escuro para o sistema"), PERSONALIZE, "SystemUsesLightTheme", 0, 1),
@@ -1378,6 +1381,11 @@ unsafe fn run_cmd(hwnd: HWND, label: &str, cmd: Cmd) {
                     Cmd::CleanTemp => {
                         say(t!("Очистка…", "Cleaning…", ja: "クリーンアップ中…", pt: "Limpando…").into());
                         ext::clean_temp(note);
+                    }
+                    Cmd::Wallpaper => {
+                        if sys::pick_wallpaper(hwnd).is_ok() {
+                            say(t!("Обои изменены", "Wallpaper changed", ja: "壁紙を変更しました", pt: "Plano de fundo alterado").into());
+                        }
                     }
                     Cmd::EmptyBin => {
                         if ext::empty_bin(hwnd) {

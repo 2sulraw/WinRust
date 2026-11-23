@@ -124,6 +124,8 @@ const BAR_H: i32 = 40;
 // hit-test results. Buttons (Start, pins, windows) are >= 0 in left-to-right order; tray apps are TAPP + index.
 const NONE: i32 = -1;
 const SEARCH: i32 = -10;
+const TASKVIEW: i32 = -14; // Task View button (virtual desktops), right of search (#83)
+const LEAD: i32 = 2; // slots before Start: search, Task View
 const CLOCK: i32 = -4;
 const LANG: i32 = -6;
 const WIFI_I: i32 = -7;
@@ -434,6 +436,7 @@ unsafe extern "system" fn tip_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM)
 unsafe fn tip_text(h: i32) -> String {
     match h {
         SEARCH => "Search".into(),
+        TASKVIEW => t!("Представление задач", "Task View", ja: "タスク ビュー", pt: "Visão de Tarefas").into(),
         0 => "Start".into(),
         TAPP => "Hidden icons".into(),
         GEAR => t!("Стиль", "Style", ja: "スタイル", pt: "Estilo").into(),
@@ -1067,6 +1070,21 @@ unsafe fn lnk_aumid(lnk: &[u16]) -> String {
     .unwrap_or_default()
 }
 
+/// The AppUserModelID a window carries (Store apps, installed web apps), "" if none.
+unsafe fn win_aumid(h: HWND) -> String {
+    use windows::{core::GUID, Win32::{Foundation::{HWND as WHWND, PROPERTYKEY}, System::Com::{CoTaskMemFree, StructuredStorage::PropVariantToStringAlloc}, UI::Shell::PropertiesSystem::{IPropertyStore, SHGetPropertyStoreForWindow}}};
+    (|| -> Option<String> {
+        let ps: IPropertyStore = SHGetPropertyStoreForWindow(WHWND(h)).ok()?;
+        let key = PROPERTYKEY { fmtid: GUID::from_u128(0x9F4C2855_9F79_4B39_A8D0_E1D42DE1D5F3), pid: 5 }; // PKEY_AppUserModel_ID
+        let p = PropVariantToStringAlloc(&ps.GetValue(&key).ok()?).ok()?;
+        let s = p.to_string().ok();
+        CoTaskMemFree(Some(p.0 as *const _));
+        s
+    })()
+    .unwrap_or_default()
+    .to_lowercase()
+}
+
 /// Taskbar pins the user removed from our bar: Windows still lists them in `FavoritesResolve`, they must not come back.
 fn unpinned_file() -> PathBuf {
     appdata_file(r"topbar-taskband\unpinned.txt")
@@ -1189,16 +1207,22 @@ fn refresh_buttons() {
         }
     }
     // EnumWindows lists by z-order, so clicking a window would jump its button to the front: keep the order they first appeared in
+    let mut keys: Vec<String> = vec![String::new(); btns.len()]; // keys[i] belongs to btns[i]; "" matches nothing
     ORDER.with_borrow_mut(|o| {
         o.retain(|w| loose.contains(w));
         o.extend(loose.iter().filter(|w| !o.contains(w)).copied().collect::<Vec<_>>());
         for &w in o.iter() {
             // windows of one app share a button (a click then offers the list); generic hosts (Store apps, java...) stay apart (#90)
+            // the window's own AppUserModelID is part of the key: a web app installed from Brave runs as brave.exe too (#118, #117)
             let exe = unsafe { exe_of(w) };
-            let same = (!exe.is_empty() && !is_host(&exe)).then(|| btns.iter().position(|b| b.pin.is_none() && b.wins.first().is_some_and(|&x| unsafe { exe_of(x) } == exe))).flatten();
+            let key = format!("{exe}|{}", unsafe { win_aumid(w) });
+            let same = (!exe.is_empty() && !is_host(&exe)).then(|| keys.iter().position(|k| *k == key)).flatten();
             match same {
                 Some(i) => btns[i].wins.push(w),
-                None => btns.push(Btn { pin: None, wins: vec![w], icon: unsafe { win_icon(w) } }),
+                None => {
+                    btns.push(Btn { pin: None, wins: vec![w], icon: unsafe { win_icon(w) } });
+                    keys.push(key);
+                }
             }
         }
     });
@@ -1271,10 +1295,10 @@ fn layout(w: i32) -> Layout {
     let sys = (clock.0 - sc(4) - sc(150 + if BAT.get().0 >= 0 { 66 } else { 0 }), clock.0 - sc(4));
     let apps = (sys.0 - sc(24) * tray_count() as i32, sys.0);
     let margin = (w - apps.0) + sc(8); // keep the button group centered and clear of both sides
-    let n = BTNS.with_borrow(|b| b.len()) as i32 + 1; // + the search slot
+    let n = BTNS.with_borrow(|b| b.len()) as i32 + LEAD; // + the search and Task View slots
     let bw = (((w - 2 * margin + gap) / n.max(1)) - gap).clamp(sc(16), sc(44 + [-6, 0, 8][i18n::style::bar_size() as usize % 3]));
     // centered on search + Start + pins only: opening an unpinned window adds a button on the right instead of shifting Start left
-    let fixed = (PINS.with_borrow(|p| p.len()) as i32 + 2).min(n);
+    let fixed = (PINS.with_borrow(|p| p.len()) as i32 + LEAD + 1).min(n);
     // ...but never so far right that the windows' buttons run into the tray: then the whole row shifts left
     let right_limit = w - margin - (n * (bw + gap) - gap);
     let centered = (w - (fixed * (bw + gap) - gap)) / 2;
@@ -1302,9 +1326,9 @@ unsafe fn hit(hwnd: HWND, x: i32, y: i32) -> i32 {
     if x >= l.apps.0 {
         return TAPP + (x - l.apps.0) / sc(24);
     }
-    let n = BTNS.with_borrow(|b| b.len()) as i32 + 1;
+    let n = BTNS.with_borrow(|b| b.len()) as i32 + LEAD;
     let (d, i) = (x - l.x0, (x - l.x0) / (l.bw + l.gap));
-    if d < 0 || d % (l.bw + l.gap) >= l.bw || i >= n { NONE } else if i == 0 { SEARCH } else { i - 1 }
+    if d < 0 || d % (l.bw + l.gap) >= l.bw || i >= n { NONE } else if i == 0 { SEARCH } else if i == 1 { TASKVIEW } else { i - LEAD }
 }
 
 // ---------- animation ----------
@@ -1619,10 +1643,13 @@ unsafe fn paint_vert(dc: HDC, cr: RECT, fonts: [HFONT; 4]) {
     let sb = cell(l.x0, l.bw);
     glow(dc, SEARCH, hot == SEARCH, sb, pal().bg, pal().hover, sc(8));
     text(dc, "\u{E721}", sb, if hot == SEARCH { pal().text } else { dim }, DT_CENTER);
+    let tb = cell(l.x0 + l.bw + l.gap, l.bw);
+    glow(dc, TASKVIEW, hot == TASKVIEW, tb, pal().bg, pal().hover, sc(8));
+    text(dc, "\u{E7C4}", tb, if hot == TASKVIEW { pal().text } else { dim }, DT_CENTER);
 
     BTNS.with_borrow(|btns| {
         for (i, b) in btns.iter().enumerate() {
-            let y = l.x0 + (i as i32 + 1) * (l.bw + l.gap);
+            let y = l.x0 + (i as i32 + LEAD) * (l.bw + l.gap);
             let r = cell(y, l.bw);
             let mid = y + l.bw / 2;
             let act = b.wins.contains(&fg);
@@ -1776,11 +1803,14 @@ unsafe fn paint(hwnd: HWND) {
     glow(dc, SEARCH, hot == SEARCH, sb, pal().bg, pal().hover, sc(8));
     SelectObject(dc, f_glyph);
     text(dc, "\u{E721}", sb, if hot == SEARCH { pal().text } else { mix(pal().dim, pal().text, 0.5) }, DT_CENTER);
+    let tb = RECT { left: l.x0 + l.bw + l.gap, top, right: l.x0 + 2 * l.bw + l.gap, bottom: bot };
+    glow(dc, TASKVIEW, hot == TASKVIEW, tb, pal().bg, pal().hover, sc(8));
+    text(dc, "\u{E7C4}", tb, if hot == TASKVIEW { pal().text } else { mix(pal().dim, pal().text, 0.5) }, DT_CENTER);
 
     // Start, pinned apps, open windows (center)
     BTNS.with_borrow(|btns| {
         for (i, b) in btns.iter().enumerate() {
-            let x = l.x0 + (i as i32 + 1) * (l.bw + l.gap);
+            let x = l.x0 + (i as i32 + LEAD) * (l.bw + l.gap);
             let r = RECT { left: x, top, right: x + l.bw, bottom: bot };
             let act = b.wins.contains(&fg);
             let (th, ta, tp) = (hv(i as i32, hot == i as i32), hv(2000 + i as i32, act), press_t(i as i32));
@@ -2401,12 +2431,28 @@ unsafe fn click(h: i32, left: bool, mid: bool) {
                 fly::toggle(fly::Kind::Start);
             }
         }
+        TASKVIEW if left => keys(&[VK_LWIN, VK_TAB]), // virtual desktops (#83)
         // left: the language picker; right: straight to the next one (Win+Space is explorer's, gone under rs-shell)
         LANG if left => lang_menu(BAR.load(Relaxed) as HWND),
         LANG => next_lang(BAR.load(Relaxed) as HWND, false),
         WIFI_I => fly::toggle(if left { fly::Kind::Quick } else { fly::Kind::Wifi }), // right click: the network list
         VOL_I | BAT_I => fly::toggle(fly::Kind::Quick),
         CLOCK if left => fly::toggle(fly::Kind::Cal),
+        CLOCK => {
+            // right click: like Windows 11, a menu with the date and time and notification settings (#126)
+            let items = vec![
+                fly::MItem::new(t!("Настройка даты и времени", "Adjust date and time", ja: "日付と時刻を調整する", pt: "Ajustar data e hora")),
+                fly::MItem::new(t!("Параметры уведомлений", "Notification settings", ja: "通知の設定", pt: "Configurações de notificação")),
+            ];
+            fly::menu(tip_cx(&bar_layout(BAR.load(Relaxed) as HWND), CLOCK), None, items, |i| {
+                if i == 0 {
+                    // the classic applet opens at once with or without Explorer; the Settings page needs Explorer started first
+                    let _ = Command::new("control.exe").arg("timedate.cpl").creation_flags(NO_WINDOW).spawn();
+                } else {
+                    open(&wide("ms-settings:notifications"));
+                }
+            });
+        }
         SHOWDESK if left => winrust_common::desktop::toggle(),
         GEAR => style_menu(),
         TAPP..=-900 => {
@@ -2469,7 +2515,7 @@ unsafe fn min_rect(info: *mut ShellHookInfo, bar: HWND) {
     let exe = exe_of(w);
     let i = BTNS.with_borrow(|b| b.iter().position(|b| b.wins.contains(&w)).or_else(|| b.iter().position(|b| !exe.is_empty() && b.wins.first().is_some_and(|&x| exe_of(x) == exe))));
     let x = match i {
-        Some(i) => l.x0 + (i as i32 + 1) * (l.bw + l.gap),
+        Some(i) => l.x0 + (i as i32 + LEAD) * (l.bw + l.gap),
         None => (l.x0 + l.apps.0) / 2, // no button (yet): the middle of the bar
     };
     if vert() {
@@ -2487,6 +2533,7 @@ unsafe fn tip_cx(l: &Layout, h: i32) -> i32 {
     (if vert() { 0 } else { bar_x_w().0 }) + match h {
         GEAR => sc(GEAR_X.0 + GEAR_X.1 / 2),
         SEARCH => l.x0 + l.bw / 2,
+        TASKVIEW => l.x0 + (l.bw + l.gap) + l.bw / 2,
         CLOCK => (l.clock.0 + l.clock.1) / 2,
         SHOWDESK => l.clock.1 + sc(3),
         LANG => l.sys.0 + sc(21),
@@ -2494,7 +2541,7 @@ unsafe fn tip_cx(l: &Layout, h: i32) -> i32 {
         VOL_I => l.sys.0 + sc(90),
         BAT_I => l.sys.0 + sc(130),
         t if (TAPP..TAPP + 100).contains(&t) => l.apps.0 + (t - TAPP) * sc(24) + sc(12),
-        i => l.x0 + (i + 1) * (l.bw + l.gap) + l.bw / 2,
+        i => l.x0 + (i + LEAD) * (l.bw + l.gap) + l.bw / 2,
     }
 }
 

@@ -8,13 +8,12 @@ use windows_sys::Win32::{
     Foundation::{HWND, LPARAM},
     UI::{
         Input::KeyboardAndMouse::keybd_event,
-        WindowsAndMessaging::{EnumWindows, FindWindowExW, GetShellWindow, GetWindow, GetWindowThreadProcessId, IsHungAppWindow, IsWindowVisible, SetForegroundWindow, ShowWindow},
+        WindowsAndMessaging::{EnumWindows, FindWindowExW, GetShellWindow, GetWindow, GetWindowThreadProcessId, IsHungAppWindow, IsIconic, IsWindowVisible, SetForegroundWindow, ShowWindow},
     },
 };
 
 const SETTINGS: &str = "SystemSettings.exe";
 const ENROLL: &str = "CredentialEnrollmentManager.exe"; // the PIN / Windows Hello setup dialog
-const NO_WINDOW: u32 = 0x0800_0000;
 
 fn w(s: &str) -> Vec<u16> {
     s.encode_utf16().chain([0]).collect()
@@ -91,12 +90,48 @@ fn hung(pid: u32) -> bool {
     d.1
 }
 
-/// A Settings process that hangs (opened before the shell was ready) swallows every later launch: it must go.
+/// A window the user can see: visible and not cloaked by the shell (a minimized frame counts too).
+fn seen(h: HWND) -> bool {
+    use windows_sys::Win32::Graphics::Dwm::{DWMWA_CLOAKED, DwmGetWindowAttribute};
+    let mut cloaked = 0u32;
+    unsafe { IsWindowVisible(h) != 0 && (IsIconic(h) != 0 || DwmGetWindowAttribute(h, DWMWA_CLOAKED as u32, &mut cloaked as *mut u32 as _, 4) != 0 || cloaked == 0) }
+}
+
+/// Whether a Settings process shows a window: its CoreWindow, or the frame that owns it.
+fn showing(pid: u32) -> bool {
+    let cls = w("Windows.UI.Core.CoreWindow");
+    let mut c = std::ptr::null_mut();
+    loop {
+        c = unsafe { FindWindowExW(std::ptr::null_mut(), c, cls.as_ptr(), std::ptr::null()) };
+        if c.is_null() {
+            return false;
+        }
+        if pid_of(c) == pid {
+            let o = unsafe { GetWindow(c, 4) }; // GW_OWNER: the ApplicationFrameWindow
+            if seen(c) || (!o.is_null() && seen(o)) {
+                return true;
+            }
+        }
+    }
+}
+
+/// A Settings process that is no use: hung (opened before the shell was ready), or closed but kept alive suspended with
+/// its window cloaked. Either swallows every later launch, so the page never shows, and a closed one never exits, so the
+/// Explorer started for it was never ended.
+fn stale(pid: u32) -> bool {
+    hung(pid) || !showing(pid)
+}
+
 fn any_hung() -> bool {
     proc::pids(SETTINGS).into_iter().any(hung)
 }
 
+/// Before a launch: every Settings process that does not show a window. After it: only hung ones (a fresh one has no window yet).
 fn kill_stale() {
+    proc::pids(SETTINGS).into_iter().filter(|&p| stale(p)).for_each(proc::kill);
+}
+
+fn kill_hung() {
     proc::pids(SETTINGS).into_iter().filter(|&p| hung(p)).for_each(proc::kill);
 }
 
@@ -106,6 +141,22 @@ fn wait(n: u32, mut done: impl FnMut() -> bool) {
             return;
         }
         sleep(Duration::from_millis(100));
+    }
+}
+
+/// Marks this session's autostart as done, the way Explorer did itself on older builds: an Explorer started as the shell
+/// runs the Run keys and the Startup folder again otherwise (a second Chrome window each time Settings opened). The keys
+/// are volatile: they go with the session.
+fn mark_autostart_done() {
+    use windows_sys::Win32::System::{Registry::*, RemoteDesktop::ProcessIdToSessionId};
+    let mut sid = 0u32;
+    unsafe { ProcessIdToSessionId(std::process::id(), &mut sid) };
+    for name in ["RunStuffHasBeenRun", "StartupHasBeenRun"] {
+        let key = w(&format!(r"Software\Microsoft\Windows\CurrentVersion\Explorer\SessionInfo\{sid}\{name}"));
+        let mut h: HKEY = std::ptr::null_mut();
+        if unsafe { RegCreateKeyExW(HKEY_CURRENT_USER, key.as_ptr(), 0, std::ptr::null(), REG_OPTION_VOLATILE, KEY_WRITE, std::ptr::null(), &mut h, std::ptr::null_mut()) } == 0 {
+            unsafe { RegCloseKey(h) };
+        }
     }
 }
 
@@ -119,7 +170,8 @@ fn run(uri: &str) {
     if !explorer_shell() {
         // our desktop is a window of class Progman too: with it up Explorer thinks a shell exists and starts as a plain folder host
         proc::pids("rust-explorer.exe").into_iter().filter(|&p| has_desktop(p)).for_each(proc::kill);
-        let _ = Command::new("runas.exe").args(["/trustlevel:0x20000", r"C:\Windows\explorer.exe"]).creation_flags(NO_WINDOW).status();
+        mark_autostart_done();
+        let _ = proc::start_shell_explorer();
         wait(200, explorer_shell);
         // the shell window appears before the immersive shell services behind it are up
         wait(150, explorer_tray);
@@ -137,20 +189,24 @@ fn run(uri: &str) {
         if !any_hung() {
             break;
         }
-        kill_stale();
+        kill_hung();
     }
     if started {
         // ends when Settings is closed, or when it hangs for good
         // the PIN / Windows Hello dialog is a process of its own hosted by Explorer's immersive shell, and Settings looks hung
         // while it waits on it: Explorer stays until both are gone (ending it under the dialog left it blank, #110)
-        let mut bad = 0;
+        let (mut bad, mut shown) = (0, false);
         loop {
             let enrolling = !proc::pids(ENROLL).is_empty();
             if !enrolling && (bad >= 5 || proc::pids(SETTINGS).is_empty()) {
                 break;
             }
             sleep(Duration::from_secs(2));
-            bad = if !enrolling && any_hung() { bad + 1 } else { 0 };
+            // closing Settings leaves its process suspended with the window cloaked: that counts as closed, but only once it
+            // was on screen (while the blue splash shows, its window is still cloaked)
+            let on_screen = proc::pids(SETTINGS).into_iter().any(showing);
+            shown |= on_screen;
+            bad = if !enrolling && (any_hung() || (shown && !on_screen)) { bad + 1 } else { 0 };
         }
         kill_stale();
         proc::kill_shell_explorers();

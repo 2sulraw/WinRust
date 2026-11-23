@@ -345,7 +345,7 @@ fn may_end_explorer(markers: bool, since_start: Duration, all_running: bool, unt
 
 /// Gives the user Explorer back (with a normal, not elevated, token: the shell must never run elevated).
 fn start_shell_explorer() {
-    let r = quiet("runas").args(["/trustlevel:0x20000", r"C:\Windows\explorer.exe"]).creation_flags(NO_WINDOW).spawn();
+    let r = winrust_common::proc::start_shell_explorer();
     log(&format!("explorer shell started -> {:?}", r.map(|_| ())));
 }
 
@@ -392,7 +392,10 @@ fn overlay_watch(replace: bool, desktop: PathBuf, up: impl Fn() -> bool) {
                 killed = true;
             }
         }
-        dmiss = if desktop.exists() && !up() { dmiss + 1 } else { 0 };
+        // after we ended Explorer, a shell Explorer is back only because Settings needs it (common/src/settings.rs ends our
+        // desktop for that and brings it back when Settings closes): a desktop raised under it leaves Store apps cloaked
+        let lent = replace && killed && !winrust_common::proc::shell_explorers().is_empty();
+        dmiss = if desktop.exists() && !up() && !lent { dmiss + 1 } else { 0 };
         if dmiss >= 2 { log(&format!("desktop respawn -> {:?}", quiet(&desktop).arg("--desktop").spawn().map(|_| ()))); dmiss = 0; }
         if bar_up() { misses = 0; continue; }
         misses += 1;
