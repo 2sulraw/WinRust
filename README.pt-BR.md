@@ -90,6 +90,19 @@ Medições pontuais em uma única máquina (Windows 11 IoT Enterprise 10.0.26300
 
 Resumindo: **64–99% mais rápido ou menor nos testes de tamanho/velocidade, igual na CPU ociosa e na cópia de um arquivo grande.** Ressalvas: o rs pesquisa um índice MFT pronto (e paga 53 MB de memória por isso), enquanto `dir` e PowerShell percorrem o disco do zero; o explorer.exe continuava rodando com suas janelas durante o teste, então o ganho de memória está um pouco exagerado; a Pesquisa do Windows e o Gerenciador de Tarefas original não foram comparados. As execuções de cópia e ZIP (`cargo test -p rust-explorer --release bench -- --ignored`) foram únicas, com dados recém-gravados, então os dois lados leram do cache de memória; nosso ZIP saiu um pouco maior (0,9 MB contra 0,7 MB) porque cada arquivo é compactado em seu próprio núcleo.
 
+### Carga em segundo plano
+
+Os programas que ficam rodando, antes e depois da reescrita orientada a eventos (branch `dev`, na próxima versão), na mesma máquina: tempo de CPU em 60 s de área de trabalho ociosa (`TotalProcessorTime` do processo), memória privada e handles abertos. "Antes" é a build instalada logo antes da reescrita.
+
+| Programa | CPU ociosa antes | depois | Memória privada antes | depois | Handles antes | depois |
+|---|---|---|---|---|---|---|
+| topbar | 6,3 ms/s (0,63% de um núcleo) | 0,5 ms/s (0,05%) | 9,2 MB | 7,7 MB | 459 | 426 |
+| rs-launcher (Alt+Espaço, oculto) | 6,3 ms/s (0,63%) | 0 | 12,7 MB | 1,4 MB | 800 | 110 |
+| rs-shell | 2,1 ms/s (0,21%) | 0 | 1,2 MB | 1,3 MB | 95 | 102 |
+| rs (serviço do índice de pesquisa) | 0 | 0,26 ms/s | 59,6 MB | 56,7 MB | 70 | 70 |
+
+O que mudou: a barra segue os eventos das janelas em vez de listar todas as janelas duas vezes por segundo, e desenha o fundo uma vez em vez de a cada quadro; o rs-launcher não atualiza mais a lista inteira de processos a cada 2 s; o rs-shell parou de iniciar o reg.exe e de tirar instantâneos dos processos. A linha de CPU ociosa da tabela acima foi medida de outro jeito, antes deste trabalho.
+
 ## Capturas de tela
 
 **Barra de tarefas**

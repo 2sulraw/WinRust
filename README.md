@@ -115,6 +115,19 @@ One-off measurements on one machine (Windows 11 IoT Enterprise 10.0.26300, RTX 4
 
 In short: **64–99% faster or smaller in the size/speed tests, equal on idle CPU and on copying one big file.** Caveats: rs searches a ready-made MFT index (it pays 53 MB of memory for that), while `dir` and PowerShell walk the disk from scratch; explorer.exe was still running with its windows during the test, so the memory gain is slightly overstated; Windows Search and the stock Task Manager were not compared. The copy and ZIP runs (`cargo test -p rust-explorer --release bench -- --ignored`) were single runs on data that was just written, so both sides read from the memory cache; our ZIP was slightly bigger (0.9 MB vs 0.7 MB) because each file is compressed on its own core.
 
+### Background load
+
+The programs that stay running, before and after the event-driven rework (branch `dev`, in the next release), on the same machine: CPU time used over 60 s of an idle desktop (the process's `TotalProcessorTime`), private memory and open handles. "Before" is the build that was installed just before the rework.
+
+| Program | Idle CPU before | Idle CPU after | Private memory before | after | Handles before | after |
+|---|---|---|---|---|---|---|
+| topbar | 6.3 ms/s (0.63% of a core) | 0.5 ms/s (0.05%) | 9.2 MB | 7.7 MB | 459 | 426 |
+| rs-launcher (Alt+Space, hidden) | 6.3 ms/s (0.63%) | 0 | 12.7 MB | 1.4 MB | 800 | 110 |
+| rs-shell | 2.1 ms/s (0.21%) | 0 | 1.2 MB | 1.3 MB | 95 | 102 |
+| rs (search index service) | 0 | 0.26 ms/s | 59.6 MB | 56.7 MB | 70 | 70 |
+
+What changed: the bar follows window events instead of listing every window twice a second, and draws its background once instead of on every frame; rs-launcher no longer refreshes the whole process list every 2 s; rs-shell stopped starting reg.exe and taking process snapshots. The idle-CPU row of the table above was measured another way, before this work.
+
 ## Community
 
 - **Found a bug or want a feature?** [Open an issue](https://github.com/Lemxy/WinRust/issues/new). Say your Windows version and which plugins are installed; if the installer is involved, attach the end of `%ProgramData%\plugin-launcher\install.log`. English or Russian are both fine.
