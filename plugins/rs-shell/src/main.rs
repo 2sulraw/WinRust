@@ -396,7 +396,8 @@ fn overlay_watch(replace: bool, desktop: PathBuf, up: impl Fn() -> bool) {
         // after we ended Explorer, a shell Explorer is back only because Settings needs it (common/src/settings.rs ends our
         // desktop for that and brings it back when Settings closes): a desktop raised under it leaves Store apps cloaked
         // asked only when the desktop is missing: a process snapshot plus a PEB read per explorer.exe every 3 s was for nothing
-        let lent = || replace && killed && !winrust_common::proc::shell_explorers().is_empty();
+        // the marker first: Settings sets it before it ends our desktop, so the gap until Explorer shows up is covered too
+        let lent = || winrust_common::settings::explorer_lent() || (replace && killed && !winrust_common::proc::shell_explorers().is_empty());
         dmiss = if desktop.exists() && !up() && !lent() { dmiss + 1 } else { 0 };
         if dmiss >= 2 { log(&format!("desktop respawn -> {:?}", quiet(&desktop).arg("--desktop").spawn().map(|_| ()))); dmiss = 0; }
         if bar_up() { misses = 0; continue; }

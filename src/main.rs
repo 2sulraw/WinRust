@@ -43,12 +43,12 @@ use windows_sys::Win32::{
     UI::{Input::KeyboardAndMouse::*, WindowsAndMessaging::*},
 };
 
-const BG: u32 = rgb(28, 28, 30); // the macOS dark window and grouped-list colours
-const PANEL: u32 = rgb(44, 44, 46);
-const BORDER: u32 = rgb(56, 56, 58);
-const TEXT: u32 = rgb(245, 245, 247);
-const DIM: u32 = rgb(152, 152, 157);
-const ACCENT: u32 = rgb(10, 132, 255);
+const BG: u32 = rgb(32, 32, 32); // a dark setup wizard: charcoal page, near-black header, one lime accent
+const PANEL: u32 = rgb(40, 40, 40);
+const BORDER: u32 = rgb(62, 62, 62);
+const TEXT: u32 = rgb(240, 240, 240);
+const DIM: u32 = rgb(160, 160, 160);
+const ACCENT: u32 = rgb(118, 185, 0);
 const GOOD: u32 = winrust_common::style::GOOD;
 const BAD: u32 = winrust_common::style::BAD;
 const WM_DONE: u32 = WM_APP + 1;
@@ -191,12 +191,7 @@ fn main() {
         std::process::exit(cli(&args));
     }
     refresh();
-    for i in ready() {
-        SELECTED[i].store(selected_by_default(PLUGINS[i].name, INSTALLED[i].load(Relaxed)), Relaxed);
-    }
-    for i in extras() {
-        SELECTED[i].store(INSTALLED[i].load(Relaxed), Relaxed); // an applied extra shows as on; a new one is never pre-ticked
-    }
+    reset_selection();
     unsafe {
         let (mut token, mut input): (usize, GdiplusStartupInput) = (0, zeroed());
         input.GdiplusVersion = 1;
@@ -218,7 +213,7 @@ fn main() {
             }
         });
         DwmSetWindowAttribute(hwnd, 20, &1i32 as *const i32 as *const _, 4); // dark title bar
-        DwmSetWindowAttribute(hwnd, 35, &BG as *const u32 as *const _, 4); // caption colour = window background (Win11; ignored on Win10)
+        DwmSetWindowAttribute(hwnd, 35, &ui::HEAD as *const u32 as *const _, 4); // caption colour = the header's (Win11; ignored on Win10)
         let mut m: MSG = zeroed();
         while GetMessageW(&mut m, null_mut(), 0, 0) > 0 {
             TranslateMessage(&m);
