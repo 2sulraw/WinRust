@@ -233,6 +233,8 @@ impl Data {
     pub fn refresh(&mut self) -> Vec<String> {
         let dt = self.prev.elapsed().as_secs_f64().clamp(0.3, 5.0);
         self.prev = Instant::now();
+        // seconds this tick stands for: 1 while the window is shown, ~5 in the tray (rules and history count seconds, not ticks)
+        let step = dt.round().max(1.0) as u32;
         self.ticks += 1;
         let first = self.ticks == 1; // первый замер у sysinfo неточный — не рисуем его
         self.sys.refresh_cpu_usage();
@@ -301,6 +303,7 @@ impl Data {
 
         // ---- подозрительность ----
         let windir = std::env::var("WINDIR").unwrap_or_else(|_| r"C:\Windows".into());
+        let windir_lc = windir.to_lowercase();
         let mut reasons: HashMap<u32, Vec<suspect::Reason>> = HashMap::new();
         for p in self.sys.processes().values() {
             let pid = p.pid().as_u32();
@@ -315,7 +318,7 @@ impl Data {
             }
             let exists = entry.0 < 2;
             let sig = match exe.as_deref() {
-                Some(e) if !e.to_lowercase().starts_with(&windir.to_lowercase()) => self.sig.get(e),
+                Some(e) if !e.to_lowercase().starts_with(&windir_lc) => self.sig.get(e),
                 _ => suspect::Sig::Unknown,
             };
             let name = p.name().to_string_lossy().into_owned();
@@ -456,7 +459,7 @@ impl Data {
             for p in self.procs.iter().filter(|p| rule.proc == "*" || p.name.to_lowercase() == rule.proc) {
                 if p.cpu > rule.cpu && !CRITICAL.contains(&p.name.to_lowercase().as_str()) {
                     let c = self.rule_cnt.entry((ri, p.pid)).or_insert(0);
-                    *c += 1;
+                    *c += step;
                     if *c >= rule.secs {
                         *c = 0;
                         match rule.act {
@@ -482,9 +485,10 @@ impl Data {
         // ---- история: одна запись в минуту ----
         if !first {
             let io = ((self.sample.disk_read + self.sample.disk_write) / 1024.0) as f32;
-            let top = if self.acc.n + 1 >= 60 { self.top_consumer() } else { String::new() };
+            let top = if self.acc.n + step >= 60 { self.top_consumer() } else { String::new() };
             let a = &mut self.acc;
-            (a.n, a.cpu, a.mem, a.disk, a.net) = (a.n + 1, a.cpu + self.cpu_total, a.mem + self.mem_pct, a.disk + io, a.net + ((rx + tx) / 1024.0) as f32);
+            let w = step as f32; // weighted by the seconds the sample covers: the averages stay per second
+            (a.n, a.cpu, a.mem, a.disk, a.net) = (a.n + step, a.cpu + self.cpu_total * w, a.mem + self.mem_pct * w, a.disk + io * w, a.net + ((rx + tx) / 1024.0) as f32 * w);
             if a.n >= 60 {
                 let n = a.n as f32;
                 store::append_history(&format!("{};{:.0};{:.0};{:.0};{:.0};{}", timestamp(), a.cpu / n, a.mem / n, a.disk / n, a.net / n, top));

@@ -695,8 +695,14 @@ impl App {
     }
 
     /// Из таймера: Windows-таймер может тикать чаще заданного, поэтому режем частоту.
+    /// Hidden in the tray or minimized: nothing is drawn, so a look every 5 s (rules, history, notices) is enough.
+    fn hidden(&self) -> bool {
+        self.win.handle.hwnd().is_none_or(|h| unsafe { IsWindowVisible(h) == 0 || IsIconic(h) != 0 })
+    }
+
     pub fn on_timer(&self) {
-        if self.last_tick.get().elapsed() >= Duration::from_millis(900) {
+        let every = if self.hidden() { 4900 } else { 900 };
+        if self.last_tick.get().elapsed() >= Duration::from_millis(every) {
             self.last_tick.set(Instant::now());
             self.tick();
         }
@@ -713,6 +719,9 @@ impl App {
             let msg = notes.join("; ");
             self.toast(&msg);
             self.tray.show(&msg, Some(t!("Диспетчер задач", "Task Manager", ja: "タスク マネージャー", pt: "Gerenciador de Tarefas", zh: "任务管理器")), None, None);
+        }
+        if self.hidden() {
+            return; // the table, the page lists and the repaint wait until the window is shown
         }
         {
             let (page, ticks) = (self.ui.borrow().page, self.data.borrow().ticks);
@@ -1232,6 +1241,9 @@ impl App {
                 SetForegroundWindow(h);
             }
         }
+        // up to 5 s old from the tray: fresh numbers right away
+        self.last_tick.set(Instant::now());
+        self.tick();
     }
 
     pub fn quit(&self) {

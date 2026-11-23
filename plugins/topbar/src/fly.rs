@@ -350,10 +350,11 @@ fn find_loose_exes(hw: HWND) {
         if EXE_GEN.load(Relaxed) != gen_ {
             return; // typed on: a newer search is coming
         }
-        let Ok(o) = Command::new(&rs).arg(&q).creation_flags(NO_WINDOW).output() else { return };
+        // straight to the service's pipe: no rs.exe process per query (and no full disk scan when the service is down)
+        let found = winrust_common::search::ask_all(&q);
         let mut apps = APPS.lock().unwrap();
         let mut added = false;
-        for line in String::from_utf8_lossy(&o.stdout).lines().filter(|l| l.to_lowercase().ends_with(".exe")).take(12) {
+        for line in found.iter().filter(|l| l.to_lowercase().ends_with(".exe")).take(12) {
             let w = wide(line);
             if apps.iter().any(|a| a.1 == w) {
                 continue;

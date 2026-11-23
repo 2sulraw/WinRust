@@ -149,11 +149,7 @@ fn argb(c: Rgb) -> u32 {
 
 /// Asks every drive's service, in drive order; a drive whose service is down or busy is skipped.
 fn ask(q: &str) -> Vec<String> {
-    common::drive_letters()
-        .into_iter()
-        .filter_map(|d| common::ask(d, q)?.ok())
-        .flat_map(|s| s.lines().filter(|l| !l.is_empty() && !l.starts_with("... ")).map(String::from).collect::<Vec<_>>())
-        .collect()
+    winrust_common::search::ask_all(q)
 }
 
 fn is_app(path: &str) -> bool {
@@ -1481,8 +1477,39 @@ unsafe fn draw(dc: HDC, w: i32, hgt: i32, v: &View) {
     }
 }
 
+fn kill_search_host() {
+    winrust_common::proc::pids("SearchHost.exe").into_iter().for_each(winrust_common::proc::kill);
+}
+
+/// Ends SearchHost the moment it opens a window (a WinEvent, no polling: a process snapshot costs ~9 ms, every 2 s that was
+/// the launcher's whole idle CPU). A full look every 30 s catches one that never makes a window.
+fn search_host_guard() {
+    use windows_sys::Win32::UI::Accessibility::{HWINEVENTHOOK, SetWinEventHook};
+    unsafe extern "system" fn created(_: HWINEVENTHOOK, _: u32, w: HWND, id: i32, child: i32, _: u32, _: u32) {
+        thread_local! { static LAST: std::cell::Cell<u32> = const { std::cell::Cell::new(0) }; } // one app opens many windows in a row
+        let mut pid = 0u32;
+        if id != 0 || child != 0 || unsafe { GetWindowThreadProcessId(w, &mut pid) } == 0 || pid == 0 || LAST.replace(pid) == pid {
+            return;
+        }
+        if winrust_common::proc::exe_name(pid).is_some_and(|n| n.eq_ignore_ascii_case("SearchHost.exe")) {
+            winrust_common::proc::kill(pid);
+        }
+    }
+    kill_search_host();
+    unsafe {
+        // EVENT_OBJECT_CREATE, out of context (delivered in this thread's GetMessageW), not for our own windows
+        SetWinEventHook(0x8000, 0x8000, null_mut(), Some(created), 0, 0, 0x0002);
+        SetTimer(null_mut(), 0, 30_000, None);
+        let mut m: MSG = zeroed();
+        while GetMessageW(&mut m, null_mut(), 0, 0) > 0 {
+            if m.message == WM_TIMER {
+                kill_search_host();
+            }
+        }
+    }
+}
+
 fn main() {
-    use std::os::windows::process::CommandExt;
     if std::env::args().nth(1).as_deref() == Some("--autostart") {
         let exe = std::env::current_exe().unwrap();
         let ok = std::process::Command::new("reg")
@@ -1532,18 +1559,9 @@ fn main() {
         }
         // SearchHost is started by svchost as a packaged app, which ignores the IFEO block the installer sets: end it whenever it appears.
         // Only when the installer's block is present (an uninstalled / unblocked setup must get its search back).
-        let blocked = std::process::Command::new("reg").args(["query", r"HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options\SearchHost.exe", "/v", "Debugger"]).creation_flags(0x0800_0000).output().is_ok_and(|o| o.status.success());
+        let blocked = winrust_common::reg::exists(r"HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options\SearchHost.exe", Some("Debugger"));
         if blocked {
-            std::thread::spawn(|| {
-                let Ok(mut sys) = sysinfo::System::new() else { return };
-                loop {
-                    sys.refresh_processes(sysinfo::ProcessesToUpdate::All, true);
-                    sys.processes_by_exact_name("SearchHost.exe".as_ref()).for_each(|p| {
-                        p.kill();
-                    });
-                    std::thread::sleep(std::time::Duration::from_secs(2));
-                }
-            });
+            std::thread::spawn(|| search_host_guard());
         }
         let mut msg: MSG = zeroed();
         while GetMessageW(&mut msg, null_mut(), 0, 0) > 0 {
