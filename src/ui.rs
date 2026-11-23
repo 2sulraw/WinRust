@@ -418,8 +418,8 @@ pub(crate) unsafe fn paint(hwnd: HWND) {
     for (k, label) in steps_names.iter().enumerate() {
         let y = 100.0 + k as f32 * 46.0;
         let cur = k as u8 == page;
-        let skipped = k == 1 && !custom;
-        let done = (k as u8) < page && !skipped;
+        // Express picks the components itself: that step counts as done once it is past
+        let done = (k as u8) < page;
         if cur {
             ui.shape([0.0, y, 4.0, y + 38.0], 0.0, argb(ACCENT, 255));
             ui.shape([4.0, y, SIDE_W, y + 38.0], 0.0, argb(rgb(34, 34, 34), 255));
@@ -433,7 +433,7 @@ pub(crate) unsafe fn paint(hwnd: HWND) {
             ui.round(c, 11.0, SIDE, line);
             ui.text(&(k + 1).to_string(), c, 11.0, 600, if cur { TEXT } else { DIM }, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
         }
-        let fg = if cur { TEXT } else if done { lerp(TEXT, DIM, 0.3) } else { lerp(DIM, SIDE, if skipped { 0.45 } else { 0.0 }) };
+        let fg = if cur { TEXT } else if done { lerp(TEXT, DIM, 0.3) } else { DIM };
         ui.text(label, [56.0, y, SIDE_W - 8.0, y + 38.0], 13.5, if cur { 600 } else { 400 }, fg, DT_LEFT | DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS);
     }
     if let Some(v) = update::NEWER.lock().unwrap().clone() {

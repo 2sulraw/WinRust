@@ -167,7 +167,8 @@ pub(crate) fn rx_install() -> Result<(), String> {
         // A logon task starts the overlay right at sign-in; Explorer runs the Run key only after its own startup delay (~20 s of
         // plain Windows on screen). Limited run level: the shell side must never run elevated. Fallback: the Run key.
         let task = format!("{} Register-ScheduledTask -TaskName rs-overlay -Force -Action (New-ScheduledTaskAction -Execute '{}' -Argument '--overlay') -Trigger (New-ScheduledTaskTrigger -AtLogOn -User $u) -Principal (New-ScheduledTaskPrincipal -UserId $u -LogonType Interactive -RunLevel Limited) -Settings (New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit ([TimeSpan]::Zero)) | Out-Null", task_user(), sh.display());
-        if run("powershell", &["-NoProfile", "-Command", &task]).is_ok() {
+        let task_ok = run("powershell", &["-NoProfile", "-Command", &task]).is_ok();
+        if task_ok {
             let _ = run("reg", &["delete", RUN_KEY, "/v", "rs-overlay", "/f"]);
         } else {
             WARN.lock().unwrap().push(t!("задача rs-overlay не создана: запуск через Run, с задержкой Windows", "rs-overlay task was not created: it starts via Run, with a Windows startup delay", ja: "rs-overlay タスクを作成できませんでした: Windows の起動遅延付きで Run 経由で起動します", pt: "a tarefa rs-overlay não foi criada: ela inicia pelo Run, com o atraso de inicialização do Windows", zh: "rs-overlay 计划任务未创建：它将通过 Run 启动，会有 Windows 启动延迟").into());
@@ -180,11 +181,15 @@ pub(crate) fn rx_install() -> Result<(), String> {
         }
         // the bar's Start panel and the search list Start Menu shortcuts only: without one rust-explorer has no entry (and no icon) there
         soft(t!("ярлык «Rust Explorer» в меню Пуск не создан", "Start menu shortcut 'Rust Explorer' was not created", ja: "スタート メニューのショートカット「Rust Explorer」を作成できませんでした", pt: "O atalho 'Rust Explorer' do menu Iniciar não foi criado", zh: "开始菜单快捷方式「Rust Explorer」未创建"), shortcut(&start_lnk("Rust Explorer"), &fm, ""));
-        // Start it now, with the user's normal token: explorer.exe opens a shortcut unelevated, and the shortcut carries --overlay.
+        // Start it now, with the user's normal token. The logon task does exactly that (the user's limited token, --overlay);
+        // `explorer.exe <shortcut>` is only the fallback: with Explorer not the shell it shows "File system error
+        // (-2147219195)" instead of opening the shortcut.
         let lnk = rx_lnk();
         let _ = fs::create_dir_all(lnk.parent().unwrap());
         soft(t!("overlay не запущен сейчас: он стартует при следующем входе", "overlay is not running now: it starts at the next logon", ja: "オーバーレイは現在動作していません: 次回のログオン時に起動します", pt: "o overlay não está em execução agora: ele inicia no próximo logon", zh: "rs-overlay 当前未运行：它会在下次登录时启动"), shortcut(&lnk, &sh, "--overlay"));
-        let _ = Command::new("explorer.exe").arg(&lnk).spawn();
+        if !(task_ok && run("schtasks", &["/run", "/tn", "rs-overlay"]).is_ok()) {
+            let _ = Command::new("explorer.exe").arg(&lnk).spawn();
+        }
         Ok(())
     })
 }
