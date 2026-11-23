@@ -1464,11 +1464,17 @@ unsafe fn fullscreen_now(bar: HWND) -> bool {
     mi.cbSize = size_of::<MONITORINFO>() as u32;
     GetMonitorInfoW(MonitorFromWindow(fg, MONITOR_DEFAULTTONEAREST), &mut mi);
     let m = mi.rcMonitor;
-    // a window with a title bar is never a fullscreen app (a framed maximized one overhangs the monitor by its border, #88)
-    if GetWindowLongW(fg, GWL_STYLE) as u32 & WS_CAPTION == WS_CAPTION {
-        return false;
+    let caption = GetWindowLongW(fg, GWL_STYLE) as u32 & WS_CAPTION == WS_CAPTION;
+    (m.left, m.top) == (0, 0) && covers_monitor(r, m, caption, IsZoomed(fg) != 0)
+}
+
+/// A framed maximized window overhangs the monitor by its border and is not fullscreen (#88); but a game in "borderless
+/// window" mode that keeps its caption style while sized exactly to the monitor (Dota 2 and others) is.
+fn covers_monitor(r: RECT, m: RECT, caption: bool, zoomed: bool) -> bool {
+    if caption {
+        return !zoomed && (r.left, r.top, r.right, r.bottom) == (m.left, m.top, m.right, m.bottom);
     }
-    (m.left, m.top) == (0, 0) && r.left <= m.left && r.top <= m.top && r.right >= m.right && r.bottom >= m.bottom
+    r.left <= m.left && r.top <= m.top && r.right >= m.right && r.bottom >= m.bottom
 }
 
 /// True when no app window is on screen (none open, or all minimized: Win+D): the user is looking at the desktop.
@@ -2856,6 +2862,17 @@ mod tests {
         assert_eq!(super::sane_edge(48, 1080), 48); // another bar below ours: stack above it
         assert_eq!(super::sane_edge(540, 1080), 0); // half the screen (#106)
         assert_eq!(super::sane_edge(-20, 1080), 0);
+    }
+
+    #[test]
+    fn borderless_games_count_as_fullscreen() {
+        use super::{RECT, covers_monitor};
+        let m = RECT { left: 0, top: 0, right: 1920, bottom: 1080 };
+        assert!(covers_monitor(m, m, false, false)); // plain borderless / exclusive fullscreen
+        assert!(covers_monitor(m, m, true, false)); // borderless window that kept its caption style
+        assert!(!covers_monitor(RECT { left: -8, top: -8, right: 1928, bottom: 1088 }, m, true, true)); // framed maximized window (#88)
+        assert!(!covers_monitor(m, m, true, true)); // a maximized window is never a game
+        assert!(!covers_monitor(RECT { left: 0, top: 0, right: 1920, bottom: 1032 }, m, false, false)); // leaves the bar's strip
     }
 
     #[test]
