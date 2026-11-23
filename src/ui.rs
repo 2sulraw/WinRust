@@ -334,7 +334,7 @@ pub(crate) unsafe fn paint(hwnd: HWND) {
     let open = LANG_OPEN.get().is_some();
     ui.round(lb, 6.0, if hot(ID_LANG) || open { lerp(PANEL, TEXT, 0.08) } else { PANEL }, if open { ACCENT } else { BORDER });
     ui.text(i18n::lang().name(), [lb[0] + 10.0, lb[1], lb[2] - 26.0, lb[3]], 13.0, 400, TEXT, DT_LEFT | DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS);
-    ui.text_in("\u{E70D}", [lb[2] - 22.0, lb[1], lb[2] - 8.0, lb[3]], 9.0, 400, DIM, DT_RIGHT | DT_SINGLELINE | DT_VCENTER, winrust_common::style::icon_face());
+    ui.text_in(if open { "\u{E70E}" } else { "\u{E70D}" }, [lb[2] - 22.0, lb[1], lb[2] - 8.0, lb[3]], 9.0, 400, DIM, DT_RIGHT | DT_SINGLELINE | DT_VCENTER, winrust_common::style::icon_face());
 
     // list caption
     let n_sel_ready = chosen().filter(|&i| PLUGINS[i].bulk).count();
@@ -761,6 +761,8 @@ pub(crate) unsafe fn click(hwnd: HWND, id: usize) {
 thread_local! { static LANG_OPEN: Cell<Option<HWND>> = const { Cell::new(None) }; } // the open language list
 thread_local! { static LANG_PARENT: Cell<Option<HWND>> = const { Cell::new(None) }; } // the window it belongs to
 thread_local! { static LANG_HOVER: Cell<usize> = const { Cell::new(usize::MAX) }; }
+thread_local! { static LANG_ANIM: Cell<Option<(std::time::Instant, i32, i32)>> = const { Cell::new(None) }; } // opened at, final x, y
+const LANG_ANIM_MS: f32 = 160.0;
 pub(crate) const WM_LANG_DONE: u32 = WM_APP + 9; // a language was picked in the list: say that a restart is needed
 const LANGS: [i18n::Lang; 5] = [i18n::Lang::En, i18n::Lang::Ru, i18n::Lang::Ja, i18n::Lang::Pt, i18n::Lang::Zh];
 
@@ -869,8 +871,26 @@ unsafe extern "system" fn lang_list_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPAR
             DestroyWindow(h);
             0
         }
+        WM_TIMER => {
+            // opening animation: fades in while sliding down into place, ease-out
+            if let Some((t0, x, y)) = LANG_ANIM.get() {
+                let t = (t0.elapsed().as_secs_f32() * 1000.0 / LANG_ANIM_MS).min(1.0);
+                let e = 1.0 - (1.0 - t).powi(3);
+                SetLayeredWindowAttributes(h, 0, (255.0 * e) as u8, LWA_ALPHA);
+                SetWindowPos(h, null_mut(), x, y - (8.0 * lang_scale() * (1.0 - e)) as i32, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+                if t >= 1.0 {
+                    KillTimer(h, 1);
+                    LANG_ANIM.set(None);
+                }
+            }
+            0
+        }
         WM_DESTROY => {
             LANG_OPEN.set(None);
+            LANG_ANIM.set(None);
+            if let Some(p) = LANG_PARENT.get() {
+                InvalidateRect(p, null(), 0); // the caret points down again
+            }
             0
         }
         _ => DefWindowProcW(h, msg, wp, lp),
@@ -892,12 +912,16 @@ pub(crate) unsafe fn open_lang_list(hwnd: HWND) {
     ClientToScreen(hwnd, &mut pt);
     let w = ((b[2] - b[0]) * s) as i32;
     let h = ((LANG_ITEM_H * LANGS.len() as f32 + 8.0) * s) as i32;
-    let list = CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_TOPMOST, cls.as_ptr(), null(), WS_POPUP, pt.x, pt.y, w, h, null_mut(), null_mut(), hi, null());
+    let list = CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_TOPMOST | WS_EX_LAYERED, cls.as_ptr(), null(), WS_POPUP, pt.x, pt.y, w, h, null_mut(), null_mut(), hi, null());
     LANG_HOVER.set(usize::MAX);
     LANG_PARENT.set(Some(hwnd));
     LANG_OPEN.set(Some(list));
+    SetLayeredWindowAttributes(list, 0, 0, LWA_ALPHA);
+    LANG_ANIM.set(Some((std::time::Instant::now(), pt.x, pt.y)));
+    SetTimer(list, 1, 10, None);
     ShowWindow(list, SW_SHOW);
     SetForegroundWindow(list);
+    InvalidateRect(hwnd, null(), 0); // the caret points up while the list is open
 }
 
 /// The status line after a language switch: the other programs pick lang.txt up when they start. `written` is false
