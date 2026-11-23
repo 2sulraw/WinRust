@@ -95,8 +95,6 @@ Resumindo: **64–99% mais rápido ou menor nos testes de tamanho/velocidade, ig
 **Barra de tarefas**
 
 ![Barra de tarefas na área de trabalho](docs/screenshots/taskbar.webp)
-![Menu da barra de tarefas](docs/screenshots/taskbar-menu.png)
-![Menu da barra, nova aparência](docs/screenshots/topbar-menu-new.png)
 
 **Gerenciador de Tarefas** (interface em russo)
 
@@ -104,7 +102,7 @@ Resumindo: **64–99% mais rápido ou menor nos testes de tamanho/velocidade, ig
 
 **Gerenciador de arquivos**
 
-![Gerenciador de arquivos](docs/screenshots/explorer.png)
+![Gerenciador de arquivos](docs/screenshots/explorer.webp)
 
 ---
 

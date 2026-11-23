@@ -1,14 +1,39 @@
-﻿<p align="center"><img src="assets/logo.svg" alt="WinRust" width="160"></p>
+<p align="center"><img src="assets/logo.svg" alt="WinRust" width="140"></p>
 
-# WinRust
+<h1 align="center">WinRust</h1>
 
-**A Windows shell written in Rust: faster and lighter than the stock one.** Small native programs (no .NET, no Electron) that replace parts of Windows: the taskbar, File Explorer, file search, Task Manager, plus a disk cleaner, a disk map and a photo viewer. One installer puts them in, one button takes them all out.
+<p align="center"><b>Your Windows, minus the bloat.</b><br>The taskbar, File Explorer, file search and Task Manager rebuilt in Rust: native, tiny and fast.</p>
 
-English | [Русский](README.ru.md) | [日本語](README.ja.md) | [Português (Brasil)](README.pt-BR.md)
+<p align="center">
+  <a href="https://github.com/Lemxy/WinRust/releases/latest"><b>⬇ Download WinRust.exe</b></a> ·
+  <a href="#install">Install</a> ·
+  <a href="#what-gets-installed">What's inside</a> ·
+  <a href="#community">Community</a>
+</p>
 
-<p align="center"><img src="assets/th.jpg" alt="WinRust" width="480"></p>
+<p align="center">English | <a href="README.ru.md">Русский</a> | <a href="README.ja.md">日本語</a> | <a href="README.pt-BR.md">Português (Brasil)</a></p>
+
+![The WinRust bar with its settings menu, Ruby theme](docs/screenshots/taskbar.webp)
 
 > **Read this first.** WinRust turns off Windows Search, hides the taskbar and can turn off Explorer as the shell. The exe is not code-signed, so SmartScreen will warn you. A restore point is created before install, but try it on a spare machine or a VM first.
+
+## Why WinRust
+
+- **Fast.** A folder window opens in 60 ms instead of 420 ms, a search over the whole C: drive takes 45 ms ([measurements](#benchmark)).
+- **Light.** The whole shell takes 46 MB of memory, explorer.exe took 366 MB.
+- **Native.** Small Win32 programs: no .NET, no Electron.
+- **Reversible.** Every value is saved before it is changed and put back on uninstall. One button removes everything.
+- **Yours.** Eight styles (Ruby, Terminal, Floating dock, Windows 98 and more), any colour, the bar on any edge, English, Русский, 日本語 or Português.
+
+## See it
+
+| Run (Win+R) | File manager |
+|---|---|
+| ![Run box with recent commands](docs/screenshots/run.webp) | ![rust-explorer, Ruby theme](docs/screenshots/explorer.webp) |
+
+**Task Manager** (Russian UI)
+
+![Task Manager](docs/screenshots/task-manager.webp)
 
 ## Install
 
@@ -90,21 +115,11 @@ One-off measurements on one machine (Windows 11 IoT Enterprise 10.0.26300, RTX 4
 
 In short: **64–99% faster or smaller in the size/speed tests, equal on idle CPU and on copying one big file.** Caveats: rs searches a ready-made MFT index (it pays 53 MB of memory for that), while `dir` and PowerShell walk the disk from scratch; explorer.exe was still running with its windows during the test, so the memory gain is slightly overstated; Windows Search and the stock Task Manager were not compared. The copy and ZIP runs (`cargo test -p rust-explorer --release bench -- --ignored`) were single runs on data that was just written, so both sides read from the memory cache; our ZIP was slightly bigger (0.9 MB vs 0.7 MB) because each file is compressed on its own core.
 
-## Screenshots
+## Community
 
-**Taskbar**
-
-![Taskbar on the desktop](docs/screenshots/taskbar.webp)
-![Taskbar menu](docs/screenshots/taskbar-menu.png)
-![Bar menu, new look](docs/screenshots/topbar-menu-new.png)
-
-**Task Manager** (Russian UI)
-
-![Task Manager](docs/screenshots/task-manager.webp)
-
-**File manager**
-
-![File manager](docs/screenshots/explorer.png)
+- **Found a bug or want a feature?** [Open an issue](https://github.com/Lemxy/WinRust/issues/new). Say your Windows version and which plugins are installed; if the installer is involved, attach the end of `%ProgramData%\plugin-launcher\install.log`. English or Russian are both fine.
+- **Pull requests are welcome.** One fix or one feature per PR, built and tested (`cargo test --workspace`). Big PRs that mix many changes are hard to review and get closed.
+- **Translations** live in the code: the `t!` / `tf!` macros in `common/`. A new language means adding it there and to every text.
 
 ---
 

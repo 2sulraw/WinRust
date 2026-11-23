@@ -95,8 +95,6 @@ UAC が**別の管理者**のパスワードを求めた場合でも、ユーザ
 **タスクバー**
 
 ![デスクトップ上のタスクバー](docs/screenshots/taskbar.webp)
-![タスクバーのメニュー](docs/screenshots/taskbar-menu.png)
-![バーのメニュー、新しい外観](docs/screenshots/topbar-menu-new.png)
 
 **タスク マネージャー** (ロシア語 UI)
 
@@ -104,7 +102,7 @@ UAC が**別の管理者**のパスワードを求めた場合でも、ユーザ
 
 **ファイル マネージャー**
 
-![ファイル マネージャー](docs/screenshots/explorer.png)
+![ファイル マネージャー](docs/screenshots/explorer.webp)
 
 ---
 
