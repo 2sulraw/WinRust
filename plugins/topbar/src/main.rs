@@ -2168,6 +2168,15 @@ unsafe fn keys(vks: &[u16]) {
     vks.iter().rev().for_each(|&v| send(v, true));
 }
 
+/// Releases `vk` alone: a swallowed key-up handed back to the shell as a synthetic one (see `run::kb_hook`).
+unsafe fn key_up(vk: u16) {
+    let mut i: INPUT = zeroed();
+    i.r#type = INPUT_KEYBOARD;
+    i.Anonymous.ki.wVk = vk;
+    i.Anonymous.ki.dwFlags = KEYEVENTF_KEYUP;
+    SendInput(1, &i, size_of::<INPUT>() as i32);
+}
+
 /// WM_CLOSE. A window of an elevated app ignores it from our normal-rights process (UIPI), so then
 /// ask for admin once (UAC) and let an elevated taskkill send the close request.
 unsafe fn close_window(w: HWND) {
