@@ -341,7 +341,11 @@ unsafe fn activate(h: HWND, p: PathBuf, is_dir: bool) {
     else {
         // like Explorer: the exe starts in its own folder (games look for files next to it)
         let dir = p.parent().map(|d| w(&d.to_string_lossy()));
+        let before = sh::top_windows();
         unsafe { ShellExecuteW(h, ptr::null(), w(&p.to_string_lossy()).as_ptr(), ptr::null(), dir.as_ref().map_or(ptr::null(), |d| d.as_ptr()), SW_SHOWNORMAL) };
+        // an unassociated file makes Windows show its "How do you want to open this file?" chooser, which lands partly off
+        // screen without Explorer as the shell (#191): pull it back in, as the context menu's own dialogs already are
+        sh::keep_on_screen(before);
     }
 }
 
@@ -1117,7 +1121,7 @@ mod sh {
         TRUE
     }
 
-    fn top_windows() -> Vec<isize> {
+    pub(crate) fn top_windows() -> Vec<isize> {
         let mut v: Vec<isize> = vec![];
         unsafe { let _ = EnumWindows(Some(collect), LPARAM(&mut v as *mut _ as isize)); }
         v
@@ -1125,7 +1129,7 @@ mod sh {
 
     /// Dialogs the shell opens for a command ("Open with" > choose another app, Properties) can land partly off screen on some
     /// setups. For a few seconds after the command, any new window that sticks out of its monitor is moved back inside.
-    fn keep_on_screen(before: Vec<isize>) {
+    pub(crate) fn keep_on_screen(before: Vec<isize>) {
         std::thread::spawn(move || unsafe {
             for _ in 0..40 {
                 std::thread::sleep(std::time::Duration::from_millis(150));

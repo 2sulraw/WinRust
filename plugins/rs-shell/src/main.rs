@@ -121,6 +121,43 @@ fn find_exe(name: &str) -> PathBuf {
 
 fn bar_up() -> bool { unsafe { !FindWindowW(wide("topbar").as_ptr(), std::ptr::null()).is_null() } }
 
+/// Explorer is not the shell, so the dialogs it normally places (Windows' "How do you want to open this file?" chooser,
+/// Properties, ...) can be created at (0,0) or off the monitor and get clipped (#191). Pull a shown top-level window back
+/// inside its monitor when it sticks out. Small windows only, so a maximized or full-screen one is never touched.
+unsafe fn keep_inside(h: HWND) {
+    use windows_sys::Win32::Graphics::Gdi::{GetMonitorInfoW, MonitorFromWindow, MONITORINFO, MONITOR_DEFAULTTONEAREST};
+    unsafe {
+        if h.is_null() || IsWindowVisible(h) == 0 || IsIconic(h) != 0 || IsZoomed(h) != 0 { return; }
+        if GetAncestor(h, GA_ROOT) != h { return; } // top-level only: a child's rectangle is relative to its parent
+        let mut r: RECT = std::mem::zeroed();
+        if GetWindowRect(h, &mut r) == 0 || r.right <= r.left || r.bottom <= r.top { return; }
+        let mut mi: MONITORINFO = std::mem::zeroed();
+        mi.cbSize = size_of::<MONITORINFO>() as u32;
+        if GetMonitorInfoW(MonitorFromWindow(h, MONITOR_DEFAULTTONEAREST), &mut mi) == 0 { return; }
+        let a = mi.rcWork;
+        if r.right - r.left > a.right - a.left || r.bottom - r.top > a.bottom - a.top { return; } // bigger than the screen: not a stray dialog
+        let x = r.left.min(a.right - (r.right - r.left)).max(a.left);
+        let y = r.top.min(a.bottom - (r.bottom - r.top)).max(a.top);
+        if (x, y) != (r.left, r.top) {
+            SetWindowPos(h, ptr::null_mut(), x, y, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+        }
+    }
+}
+
+/// Keeps stray dialogs on screen for sessions without Explorer. A WinEvent hook, not a poll: nothing runs until a window
+/// shows, and only that window is looked at. Installed on its own thread, which pumps the messages the hook needs.
+fn watch_stray_windows() {
+    use windows_sys::Win32::UI::Accessibility::SetWinEventHook;
+    unsafe extern "system" fn on_show(_hook: *mut std::ffi::c_void, _event: u32, h: HWND, id_object: i32, id_child: i32, _thread: u32, _time: u32) {
+        if id_object == OBJID_WINDOW && id_child == CHILDID_SELF as i32 { unsafe { keep_inside(h) }; }
+    }
+    thread::spawn(|| unsafe {
+        SetWinEventHook(EVENT_OBJECT_SHOW, EVENT_OBJECT_SHOW, ptr::null_mut(), Some(on_show), 0, 0, WINEVENT_OUTOFCONTEXT);
+        let mut m: MSG = std::mem::zeroed();
+        while GetMessageW(&mut m, ptr::null_mut(), 0, 0) > 0 { TranslateMessage(&m); DispatchMessageW(&m); }
+    });
+}
+
 /// A minimized window left on screen (or minimized before the hide setting was applied) shows as a caption stub on
 /// the desktop: park it where Windows itself parks hidden minimized windows.
 unsafe extern "system" fn park(h: HWND, _: LPARAM) -> BOOL {
@@ -217,6 +254,7 @@ fn log(msg: &str) {
 fn run_shell() {
     unsafe { windows_sys::Win32::System::Console::FreeConsole() };
     log("start");
+    watch_stray_windows(); // Explorer is gone here: keep its dialogs (the "open this file" chooser) on screen (#191)
     // without explorer a minimized window is drawn as a little caption stub on the desktop (apps started with
     // --minimized left grey rectangles over the icons): hide them, the bar lists the windows anyway
     let mut mm = MINIMIZEDMETRICS { cbSize: size_of::<MINIMIZEDMETRICS>() as u32, iWidth: 0, iHorzGap: 0, iVertGap: 0, iArrange: ARW_HIDE as i32 };
@@ -369,6 +407,7 @@ fn overlay() {
     unsafe { windows_sys::Win32::System::Console::FreeConsole() };
     let replace = replace_on();
     log(&format!("overlay start (replace explorer: {replace})"));
+    if replace { watch_stray_windows(); } // Explorer is ended below: keep its dialogs on screen (#191)
     let wp = thread::spawn(wallpaper_bmp); // the BMP the desktop window paints; the system wallpaper stays Explorer's
     if !bar_up() { log(&format!("topbar spawn -> {:?}", quiet(find_exe("topbar.exe")).spawn().map(|_| ()))); }
     // Win+I / Win+E / Win+D live in reshell: its Run entry may be missing (another account's HKCU), and without it Explorer's own Win+I
